@@ -1,10 +1,308 @@
-(()=>{const data=window.MODEL_DATA?.rows||[],$=id=>document.getElementById(id),roles={TOP:"上路",JUNGLE:"打野",MIDDLE:"中路",BOTTOM:"下路",UTILITY:"辅助"};
-const names={early_gold_15:["15 分钟金币","Gold @ 15"],early_xp_15:["15 分钟经验","XP @ 15"],early_cs_15:["15 分钟补刀","CS @ 15"],early_kills:["前期击杀","Kills 0–15"],early_deaths:["前期死亡","Deaths 0–15"],early_assists:["前期助攻","Assists 0–15"],mid_gold_15_30:["中期获得金币","Gold 15–30"],mid_cs_15_30:["中期补刀","CS 15–30"],mid_champion_damage_15_30:["中期英雄伤害","Champion damage 15–30"],mid_kills:["中期击杀","Kills 15–30"],mid_deaths:["中期死亡","Deaths 15–30"],mid_assists:["中期助攻","Assists 15–30"],mid_team_turrets:["中期团队推塔","Team turrets 15–30"],mid_team_dragons:["中期团队控龙","Team dragons 15–30"],late_champion_damage:["后期英雄伤害","Champion damage 30+"],late_damage_taken:["后期承受伤害","Damage taken 30+"],late_kills:["后期击杀","Kills 30+"],late_deaths:["后期死亡","Deaths 30+"],late_assists:["后期助攻","Assists 30+"],late_teamfights:["后期团战数","Detected teamfights"],late_teamfight_participations:["后期团战参与","Teamfight participation"],late_first_target_deaths:["团战首个阵亡","First-target deaths"],cs_per_min:["每分钟补刀","CS / min"],damage_per_min:["每分钟英雄伤害","Damage / min"],vision_per_min:["每分钟视野分","Vision / min"],challenge_killParticipation:["击杀参与率","Kill participation"],challenge_goldPerMinute:["每分钟金币","Gold / min"],challenge_damageTakenOnTeamPercentage:["团队承伤占比","Damage taken share"],challenge_teamDamagePercentage:["团队伤害占比","Team damage share"],challenge_laneMinionsFirst10Minutes:["10 分钟线上补刀","Lane CS @ 10"],challenge_maxCsAdvantageOnLaneOpponent:["最大对位补刀优势","Max lane CS advantage"]};
-const phaseMetrics={early:["early_gold_15","early_xp_15","early_cs_15","early_kills","early_deaths","early_assists","challenge_laneMinionsFirst10Minutes","challenge_maxCsAdvantageOnLaneOpponent"],mid:["mid_gold_15_30","mid_cs_15_30","mid_champion_damage_15_30","mid_kills","mid_deaths","mid_assists","mid_team_turrets","mid_team_dragons"],late:["late_champion_damage","late_damage_taken","late_kills","late_deaths","late_assists","late_teamfights","late_teamfight_participations","late_first_target_deaths"],global:["cs_per_min","damage_per_min","vision_per_min","challenge_killParticipation","challenge_goldPerMinute","challenge_damageTakenOnTeamPercentage","challenge_teamDamagePercentage"]},phaseCopy={early:["EARLY GAME","前 15 分钟行为基准"],mid:["MID GAME","15–30 分钟行为基准"],late:["LATE GAME","30 分钟后行为基准"],global:["FULL MATCH","全局效率与贡献"],all:["ALL METRICS","全部可用指标"]};
-let phase="early",limit=12;const groups=new Map;data.forEach(d=>{const k=`${d.c}|${d.r}`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(d)});const champions=[...new Set(data.map(d=>d.c))].sort();
-const fmt=n=>{const a=Math.abs(n);if(a>=1e6)return`${(n/1e6).toFixed(1)}m`;if(a>=1e4)return`${(n/1e3).toFixed(1)}k`;if(a>=1e3)return n.toLocaleString("zh-CN",{maximumFractionDigits:0});return Number(n).toLocaleString("zh-CN",{maximumFractionDigits:2})},label=m=>names[m]||[m.replace(/^(end_|challenge_)/,"").replace(/([A-Z])/g," $1").replaceAll("_"," "),m.startsWith("challenge_")?"Riot Challenges":"Match-v5 metric"],grade=n=>n>=50?["较高","good",100]:n>=30?["中等","medium",72]:n>=20?["初步","medium",52]:["探索性","",30],pct=(v,min,max)=>Math.max(0,Math.min(100,(v-min)/(max-min||1)*100));
-function roleList(c){return[...new Set(data.filter(d=>d.c===c).map(d=>d.r))].sort((a,b)=>Object.keys(roles).indexOf(a)-Object.keys(roles).indexOf(b))}function populate(){$("championSelect").innerHTML=champions.map(c=>`<option>${c}</option>`).join("");$("championSelect").value=champions.includes("Kaisa")?"Kaisa":champions[0];updateRoles()}function updateRoles(){const rs=roleList($("championSelect").value);$("roleSelect").innerHTML=rs.map(r=>`<option value="${r}">${roles[r]||r}</option>`).join("");render()}
-function card(d){const[name,sub]=label(d.m),g=grade(d.n_clean),min=d.iqr_low,max=d.iqr_high,q1=pct(d.p25,min,max),q3=pct(d.p75,min,max),med=pct(d.median,min,max),mean=pct(d.mean,min,max);return`<article class="metric-card"><div class="metric-top"><div><h3>${name}</h3><p>${sub}</p></div><span class="sample-grade ${g[1]}">${g[0]} · n=${d.n_clean}</span></div><div class="numbers"><div><span>P25</span><b>${fmt(d.p25)}</b></div><div><span>中位数</span><b>${fmt(d.median)}</b></div><div><span>均值</span><b>${fmt(d.mean)}</b></div><div><span>P75</span><b>${fmt(d.p75)}</b></div></div><div class="boxplot"><i class="whisker" style="left:0;width:100%"></i><i class="iqr-box" style="left:${q1}%;width:${Math.max(1,q3-q1)}%"></i><i class="median-line" style="left:${med}%"></i><i class="mean-dot" style="left:${mean}%"></i></div><div class="compare-row"><label>输入本局值</label><input type="number" step="any" data-p25="${d.p25}" data-p75="${d.p75}" placeholder="—"><span class="compare-result">与典型区间比较</span></div></article>`}
-function render(){const c=$("championSelect").value,r=$("roleSelect").value;let rows=groups.get(`${c}|${r}`)||[],maxN=Math.max(0,...rows.map(x=>x.n_raw)),g=grade(maxN),search=$("metricSearch").value.trim().toLowerCase();rows=phase!=="all"?rows.filter(x=>(phaseMetrics[phase]||[]).includes(x.m)):rows.filter(x=>label(x.m)[0].toLowerCase().includes(search)||x.m.toLowerCase().includes(search));if(search&&phase!=="all")rows=rows.filter(x=>label(x.m)[0].toLowerCase().includes(search)||x.m.toLowerCase().includes(search));if(phaseMetrics[phase])rows.sort((a,b)=>phaseMetrics[phase].indexOf(a.m)-phaseMetrics[phase].indexOf(b.m));$("profileTitle").textContent=`${c} · ${roles[r]||r}`;$("championGlyph").textContent=c[0];$("sampleCount").textContent=maxN;$("confidenceLabel").textContent=g[0];$("confidenceBar").style.width=`${g[2]}%`;$("confidenceText").textContent=maxN>=30?`最多 ${maxN} 个有效样本，适合观察典型区间。`:`最多 ${maxN} 个样本，暂时只适合探索。`;$("phaseEyebrow").textContent=phaseCopy[phase][0];$("phaseTitle").textContent=phaseCopy[phase][1];$("visibleMetricCount").textContent=`显示 ${Math.min(rows.length,limit)} / ${rows.length} 项`;$("metricGrid").innerHTML=rows.slice(0,limit).map(card).join("");$("emptyState").hidden=rows.length>0;$("loadMore").hidden=rows.length<=limit;document.querySelectorAll(".compare-row input").forEach(i=>i.addEventListener("input",()=>{const o=i.nextElementSibling,v=Number(i.value),a=Number(i.dataset.p25),b=Number(i.dataset.p75);o.className="compare-result";if(i.value==="")o.textContent="与典型区间比较";else if(v<a)o.textContent="低于高分段 P25";else if(v>b)o.textContent="高于高分段 P75";else{o.textContent="位于典型区间";o.classList.add("typical")}}))}
-function coverage(){const vals=[...groups].map(([key,rows])=>({key,n:Math.max(...rows.map(x=>x.n_raw))})).sort((a,b)=>b.n-a.n).slice(0,20),max=vals[0]?.n||1;$("coverageList").innerHTML=vals.map(v=>{const[c,r]=v.key.split("|");return`<div class="coverage-row"><span>${c} · ${roles[r]||r}</span><div class="coverage-track"><i style="width:${v.n/max*100}%"></i></div><b>${v.n}</b></div>`}).join("")}
-$("championSelect").addEventListener("change",updateRoles);$("roleSelect").addEventListener("change",render);$("metricSearch").addEventListener("input",()=>{limit=12;render()});document.querySelectorAll(".phase-nav button").forEach(b=>b.addEventListener("click",()=>{document.querySelector(".phase-nav .active").classList.remove("active");b.classList.add("active");phase=b.dataset.phase;limit=12;render()}));$("loadMore").addEventListener("click",()=>{limit+=24;render()});const meta=window.MODEL_DATA?.meta||{};$("rowCount").textContent=(meta.player_match_rows||0).toLocaleString("zh-CN");$("playerCount").textContent=(meta.players_sampled||0).toLocaleString("zh-CN");$("parameterCount").textContent=data.length.toLocaleString("zh-CN");$("datasetState").textContent=`模型已载入 · ${data.length.toLocaleString("zh-CN")} 参数`;populate();coverage()})();
+(() => {
+  const core = window.MODEL_DATA || { rows: [], meta: {} };
+  const extras = window.MODEL_EXTRAS || { numericRows: [], profiles: {}, items: {}, spells: {}, runes: {}, runeStyles: {}, meta: {} };
+  const data = [...(core.rows || []), ...(extras.numericRows || [])];
+  const $ = (id) => document.getElementById(id);
+  const roles = { TOP: "上路", JUNGLE: "打野", MIDDLE: "中路", BOTTOM: "下路", UTILITY: "辅助" };
+
+  const names = {
+    early_gold_15: ["15 分钟金币", "Gold @ 15"], level_at_15: ["15 分钟等级", "Champion level @ 15"], early_xp_15: ["15 分钟经验（原始）", "Raw XP @ 15"], early_cs_15: ["15 分钟补刀", "CS @ 15"],
+    early_kills: ["前期击杀", "Kills 0–15"], early_deaths: ["前期死亡", "Deaths 0–15"], early_assists: ["前期助攻", "Assists 0–15"],
+    mid_gold_15_30: ["中期获得金币", "Gold 15–30"], mid_cs_15_30: ["中期补刀", "CS 15–30"], mid_champion_damage_15_30: ["中期英雄伤害", "Champion damage 15–30"],
+    mid_kills: ["中期击杀", "Kills 15–30"], mid_deaths: ["中期死亡", "Deaths 15–30"], mid_assists: ["中期助攻", "Assists 15–30"],
+    mid_team_turrets: ["中期团队推塔", "Team turrets 15–30"], mid_team_dragons: ["中期团队控龙", "Team dragons 15–30"],
+    late_champion_damage: ["后期英雄伤害", "Champion damage 30+"], late_damage_taken: ["后期承受伤害", "Damage taken 30+"], late_kills: ["后期击杀", "Kills 30+"],
+    late_deaths: ["后期死亡", "Deaths 30+"], late_assists: ["后期助攻", "Assists 30+"], late_teamfights: ["后期团战数", "Detected teamfights"],
+    late_teamfight_participations: ["后期团战参与", "Teamfight participation"], late_first_target_deaths: ["团战首个阵亡", "First-target deaths"],
+    cs_per_min: ["每分钟补刀", "CS / min"], damage_per_min: ["每分钟英雄伤害", "Damage / min"], vision_per_min: ["每分钟视野分", "Vision / min"],
+    challenge_killParticipation: ["击杀参与率", "Kill participation"], challenge_goldPerMinute: ["每分钟金币", "Gold / min"],
+    challenge_damageTakenOnTeamPercentage: ["团队承伤占比", "Damage taken share"], challenge_teamDamagePercentage: ["团队伤害占比", "Team damage share"],
+    challenge_laneMinionsFirst10Minutes: ["10 分钟线上补刀", "Lane CS @ 10"], challenge_maxCsAdvantageOnLaneOpponent: ["最大对位补刀优势", "Max lane CS advantage"],
+    dragon_windows: ["全场小龙窗口", "Dragon objective windows"], team_dragons_timeline: ["己方控龙数", "Team dragon secures"], enemy_dragons_timeline: ["对方控龙数", "Enemy dragon secures"],
+    dragon_fight_windows: ["发生交战的龙窗口", "Contested dragon windows"], dragon_fight_participations: ["个人龙团参与", "Dragon-fight participations"],
+    dragon_fight_kills: ["龙团击杀", "Kills near dragon"], dragon_fight_deaths: ["龙团死亡", "Deaths near dragon"], dragon_fight_assists: ["龙团助攻", "Assists near dragon"],
+    dragon_fight_team_kills: ["龙团己方击杀", "Team kills near dragon"], dragon_fight_team_deaths: ["龙团己方死亡", "Team deaths near dragon"],
+    dragon_secures_while_participating: ["参团且控下小龙", "Secures while involved"], dragon_losses_while_participating: ["参团但丢龙", "Losses while involved"],
+    dragon_secure_rate_when_present: ["龙团到场控龙率", "Secure rate when present"], dragon_fight_kill_participation: ["龙团击杀参与率", "Dragon-fight KP"],
+    dragon_fight_survival_rate: ["龙团存活率", "Dragon-fight survival"], dragon_contest_kills_per_window: ["每次龙团总击杀", "Kills per contested window"],
+    first_dragon_minute: ["第一条龙时间", "First dragon minute"], teamfights_total: ["全场团战数", "Detected teamfights"],
+    teamfight_participations_total: ["全场团战参与", "Teamfight participations"], teamfight_participation_rate: ["全场团战参与率", "Teamfight participation rate"],
+    teamfight_kills_total: ["团战击杀", "Teamfight kills"], teamfight_deaths_total: ["团战死亡", "Teamfight deaths"],
+    teamfight_assists_total: ["团战助攻", "Teamfight assists"], teamfight_first_target_deaths_total: ["全场团战首个阵亡", "First-target deaths"],
+  };
+
+  const phaseMetrics = {
+    early: ["early_gold_15", "level_at_15", "early_cs_15", "early_kills", "early_deaths", "early_assists", "challenge_laneMinionsFirst10Minutes", "challenge_maxCsAdvantageOnLaneOpponent"],
+    mid: ["mid_gold_15_30", "mid_cs_15_30", "mid_champion_damage_15_30", "mid_kills", "mid_deaths", "mid_assists", "mid_team_turrets", "mid_team_dragons"],
+    late: ["late_champion_damage", "late_damage_taken", "late_kills", "late_deaths", "late_assists", "late_teamfights", "late_teamfight_participations", "late_first_target_deaths"],
+    dragon: ["dragon_windows", "team_dragons_timeline", "enemy_dragons_timeline", "dragon_fight_windows", "dragon_fight_participations", "dragon_secure_rate_when_present", "dragon_fight_kill_participation", "dragon_fight_survival_rate", "dragon_fight_kills", "dragon_fight_deaths", "dragon_fight_assists", "first_dragon_minute"],
+    global: ["cs_per_min", "damage_per_min", "vision_per_min", "challenge_killParticipation", "challenge_goldPerMinute", "challenge_damageTakenOnTeamPercentage", "challenge_teamDamagePercentage", "teamfights_total", "teamfight_participation_rate"],
+  };
+  const phaseCopy = {
+    early: ["EARLY GAME", "前 15 分钟行为基准"], mid: ["MID GAME", "15–30 分钟行为基准"], late: ["LATE GAME", "30 分钟后行为基准"],
+    dragon: ["DRAGON FIGHT WINDOWS", "龙团与目标窗口"], global: ["FULL MATCH", "全局效率与贡献"], all: ["ALL NUMERIC FIELDS", "全部可用数值指标"],
+  };
+
+  const wordMap = {
+    total: "总", damage: "伤害", dealt: "造成", taken: "承受", champion: "英雄", champions: "英雄", kills: "击杀", deaths: "死亡", assists: "助攻",
+    gold: "金币", earned: "获得", spent: "花费", vision: "视野", wards: "守卫", ward: "守卫", placed: "放置", killed: "清除", turret: "防御塔", turrets: "防御塔",
+    minions: "小兵", jungle: "野区", enemy: "敌方", ally: "己方", team: "团队", time: "时间", first: "首次", per: "每", minute: "分钟", control: "控制",
+    heal: "治疗", healing: "治疗", shield: "护盾", objectives: "目标", dragon: "小龙", baron: "男爵", nexus: "水晶", inhibitor: "高地", pings: "信号", score: "评分",
+  };
+  const categoricalIdPattern = /^end_(item[0-6]|playerAugment\d+|championTransform|roleBoundItem|playerSubteamId)$/;
+  const groups = new Map();
+  data.forEach((row) => {
+    const key = `${row.c}|${row.r}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  const champions = [...new Set(data.map((row) => row.c))].sort();
+  let phase = "early";
+  let limit = 12;
+  let allLimit = 80;
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+  }
+
+  function humanize(metric) {
+    const cleaned = metric.replace(/^(end_|challenge_)/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+    return cleaned.split(/\s+/).map((token) => wordMap[token.toLowerCase()] || token).join(" ");
+  }
+
+  function label(metric) {
+    if (names[metric]) return names[metric];
+    const source = metric.startsWith("challenge_") ? "Riot Challenges" : metric.startsWith("end_") ? "Match-v5 end field" : metric.startsWith("dragon_") || metric.startsWith("teamfight") ? "Timeline derived" : "Match-v5 metric";
+    return [humanize(metric), source];
+  }
+
+  function isRate(metric) { return /(percentage|_rate|share)/i.test(metric) || metric === "challenge_killParticipation" || metric === "dragon_fight_kill_participation"; }
+  function fmt(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "—";
+    const absolute = Math.abs(number);
+    if (absolute >= 1e6) return `${(number / 1e6).toFixed(1)}m`;
+    if (absolute >= 1e4) return `${(number / 1e3).toFixed(1)}k`;
+    if (absolute >= 1e3) return number.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+    return number.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+  function fmtMetric(metric, value) {
+    const number = Number(value);
+    if (metric === "level_at_15" && Number.isFinite(number)) return `Lv.${number.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}`;
+    if (isRate(metric) && Number.isFinite(number) && Math.abs(number) <= 1.5) return `${(number * 100).toFixed(1)}%`;
+    if (metric === "first_dragon_minute" && Number.isFinite(number)) return `${number.toFixed(1)} 分`;
+    return fmt(number);
+  }
+  function grade(n) { return n >= 50 ? ["较高", "good", 100] : n >= 30 ? ["中等", "medium", 72] : n >= 20 ? ["初步", "medium", 52] : ["探索性", "", 30]; }
+  function pct(value, min, max) { return Math.max(0, Math.min(100, (value - min) / (max - min || 1) * 100)); }
+  function isZero(row) { return [row.p25, row.median, row.mean, row.p75].every((value) => Number(value) === 0); }
+
+  function metricCategory(metric) {
+    const lower = metric.toLowerCase();
+    if (lower.startsWith("dragon_") || lower.startsWith("teamfight") || lower.includes("dragon") || lower.includes("baron") || lower.includes("rift_herald") || lower.includes("riftHerald".toLowerCase())) return "史诗资源与团战";
+    if (/^(early|mid|late)_/.test(metric)) return "阶段表现";
+    if (/damage|physical|magic|true|critical|mitigated/.test(lower)) return "输出与承伤";
+    if (/kill|death|assist|takedown|kda|spree|multi|ace|bounty/.test(lower)) return "击杀与生存";
+    if (/gold|minute|minion|jungle|experience|level|consumable|item|cs/.test(lower)) return "经济与发育";
+    if (/vision|ward|ping|unseen|stealth/.test(lower)) return "视野与沟通";
+    if (/heal|shield|immobil|control|cc|cleanse|dodge|skillshot/.test(lower)) return "治疗、控制与操作";
+    if (/turret|tower|inhibitor|nexus|building|objective|plate/.test(lower)) return "推塔与基地";
+    if (metric.startsWith("challenge_")) return "Challenges 其他";
+    return "结算与系统";
+  }
+
+  function sourceOf(metric) {
+    if (metric.startsWith("challenge_")) return "Challenges";
+    if (metric.startsWith("end_")) return "Match-v5";
+    if (metric.startsWith("dragon_") || metric.startsWith("teamfight")) return "时间线推断";
+    return "阶段派生";
+  }
+
+  function card(row) {
+    const [name, subtitle] = label(row.m);
+    const confidence = grade(row.n_clean);
+    const min = row.iqr_low;
+    const max = row.iqr_high;
+    const q1 = pct(row.p25, min, max);
+    const q3 = pct(row.p75, min, max);
+    const median = pct(row.median, min, max);
+    const mean = pct(row.mean, min, max);
+    const inputBounds = row.m === "level_at_15" ? 'step="1" min="1" max="18"' : 'step="any"';
+    return `<article class="metric-card"><div class="metric-top"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(subtitle)}</p></div><span class="sample-grade ${confidence[1]}">${confidence[0]} · n=${row.n_clean}</span></div><div class="numbers"><div><span>P25</span><b>${fmtMetric(row.m, row.p25)}</b></div><div><span>中位数</span><b>${fmtMetric(row.m, row.median)}</b></div><div><span>均值</span><b>${fmtMetric(row.m, row.mean)}</b></div><div><span>P75</span><b>${fmtMetric(row.m, row.p75)}</b></div></div><div class="boxplot"><i class="whisker" style="left:0;width:100%"></i><i class="iqr-box" style="left:${q1}%;width:${Math.max(1, q3 - q1)}%"></i><i class="median-line" style="left:${median}%"></i><i class="mean-dot" style="left:${mean}%"></i></div><div class="compare-row"><label>输入本局值</label><input type="number" ${inputBounds} data-p25="${row.p25}" data-p75="${row.p75}" placeholder="—"><span class="compare-result">与典型区间比较</span></div></article>`;
+  }
+
+  function currentKey() { return `${$("championSelect").value}|${$("roleSelect").value}`; }
+  function currentRows() { return groups.get(currentKey()) || []; }
+
+  function renderMetrics() {
+    let rows = currentRows().filter((row) => !categoricalIdPattern.test(row.m));
+    const search = $("metricSearch").value.trim().toLowerCase();
+    if (phase !== "all") rows = rows.filter((row) => (phaseMetrics[phase] || []).includes(row.m));
+    if (search) rows = rows.filter((row) => `${label(row.m)[0]} ${row.m}`.toLowerCase().includes(search));
+    if (phaseMetrics[phase]) rows.sort((a, b) => phaseMetrics[phase].indexOf(a.m) - phaseMetrics[phase].indexOf(b.m));
+    else rows.sort((a, b) => metricCategory(a.m).localeCompare(metricCategory(b.m), "zh-CN") || label(a.m)[0].localeCompare(label(b.m)[0], "zh-CN"));
+    $("phaseEyebrow").textContent = phaseCopy[phase][0];
+    $("phaseTitle").textContent = phaseCopy[phase][1];
+    $("visibleMetricCount").textContent = `显示 ${Math.min(rows.length, limit)} / ${rows.length} 项`;
+    $("metricGrid").innerHTML = rows.slice(0, limit).map(card).join("");
+    $("emptyState").hidden = rows.length > 0;
+    $("loadMore").hidden = rows.length <= limit;
+    document.querySelectorAll(".compare-row input").forEach((input) => input.addEventListener("input", () => {
+      const result = input.nextElementSibling;
+      const value = Number(input.value);
+      const low = Number(input.dataset.p25);
+      const high = Number(input.dataset.p75);
+      result.className = "compare-result";
+      if (input.value === "") result.textContent = "与典型区间比较";
+      else if (value < low) result.textContent = "低于高分段 P25";
+      else if (value > high) result.textContent = "高于高分段 P75";
+      else { result.textContent = "位于典型区间"; result.classList.add("typical"); }
+    }));
+  }
+
+  function itemMarkup(itemId) {
+    const item = extras.items?.[String(itemId)] || { name: `物品 ${itemId}`, icon: `${itemId}.png` };
+    const version = extras.meta?.itemVersion || "16.13.1";
+    const icon = `https://ddragon.leagueoflegends.com/cdn/${version}/img/item/${item.icon}`;
+    return `<span class="item-card" title="${escapeHtml(item.name)} · ID ${escapeHtml(itemId)}"><img src="${icon}" alt="" loading="lazy"><span>${escapeHtml(item.name)}</span></span>`;
+  }
+
+  function sequenceRows(entries, separator = "→") {
+    if (!entries?.length) return `<div class="empty-panel">当前英雄位置没有可用的时间线出装样本。</div>`;
+    return entries.map((entry) => `<div class="sequence-row"><div class="item-chain">${entry.ids.map((id, index) => `${index ? `<i class="item-arrow">${separator}</i>` : ""}${itemMarkup(id)}`).join("")}</div><span class="frequency"><b>${(entry.share * 100).toFixed(1)}%</b><small>${entry.n} 局</small></span></div>`).join("");
+  }
+
+  function choiceRows(entries, formatter = (value) => value) {
+    if (!entries?.length) return `<div class="empty-panel">没有足够样本。</div>`;
+    return entries.map((entry) => `<div class="choice-row"><span>${escapeHtml(formatter(entry.value))}</span><b>${(entry.share * 100).toFixed(1)}% · ${entry.n}</b></div>`).join("");
+  }
+
+  function tupleChoiceRows(entries, formatter) {
+    if (!entries?.length) return `<div class="empty-panel">没有足够样本。</div>`;
+    return entries.map((entry) => `<div class="choice-row"><span>${escapeHtml(formatter(entry.ids))}</span><b>${(entry.share * 100).toFixed(1)}% · ${entry.n}</b></div>`).join("");
+  }
+
+  function renderEnumerables() {
+    const profile = extras.profiles?.[currentKey()];
+    const maxN = Math.max(0, ...currentRows().map((row) => row.n_raw));
+    $("enumerableCount").textContent = profile ? `${maxN} 个玩家单局` : "无时间线样本";
+    $("buildOrderPanel").innerHTML = profile ? `<p class="choice-subhead">核心装备（总价 ≥ 1600）</p>${sequenceRows(profile.coreBuildOrders)}<p class="choice-subhead">完整结算装备顺序（含未合成组件）</p>${sequenceRows(profile.buildOrders)}` : `<div class="empty-panel">没有足够样本。</div>`;
+    $("starterPanel").innerHTML = sequenceRows(profile?.starters, "+");
+    $("finalBuildPanel").innerHTML = sequenceRows(profile?.finalBuilds, "+");
+    $("summonerPanel").innerHTML = profile ? tupleChoiceRows(profile.summoners, (ids) => ids.map((id) => extras.spells?.[id] || `技能 ${id}`).join(" + ")) : `<div class="empty-panel">没有足够样本。</div>`;
+    $("runePanel").innerHTML = profile ? tupleChoiceRows(profile.runes, (ids) => `${extras.runes?.[ids[0]] || `基石 ${ids[0]}`} + ${extras.runeStyles?.[ids[1]] || `副系 ${ids[1]}`}`) : `<div class="empty-panel">没有足够样本。</div>`;
+    if (!profile) { $("sampleEnumPanel").innerHTML = `<div class="empty-panel">没有足够样本。</div>`; $("itemSlotPanel").innerHTML = `<div class="empty-panel">没有足够样本。</div>`; return; }
+    $("sampleEnumPanel").innerHTML = `<p class="choice-subhead">版本</p>${choiceRows(profile.patches)}<p class="choice-subhead">段位</p>${choiceRows(profile.ranks)}<p class="choice-subhead">结果</p>${choiceRows(profile.results)}`;
+    $("itemSlotPanel").innerHTML = profile.itemSlots.map((slot, index) => `<div class="slot-column"><h4>${index === 6 ? "饰品栏" : `物品栏 ${index + 1}`}</h4>${slot.slice(0, 4).map((entry) => { const item = extras.items?.[entry.value] || { name: `物品 ${entry.value}`, icon: `${entry.value}.png` }; const icon = `https://ddragon.leagueoflegends.com/cdn/${extras.meta?.itemVersion || "16.13.1"}/img/item/${item.icon}`; return `<div class="slot-item" title="ID ${escapeHtml(entry.value)}"><img src="${icon}" alt=""><span>${escapeHtml(item.name)}</span><b>${(entry.share * 100).toFixed(0)}%</b></div>`; }).join("")}</div>`).join("");
+  }
+
+  const dragonTypeNames = { FIRE_DRAGON: "炼狱亚龙", WATER_DRAGON: "海洋亚龙", AIR_DRAGON: "云端亚龙", EARTH_DRAGON: "山脉亚龙", HEXTECH_DRAGON: "海克斯科技亚龙", CHEMTECH_DRAGON: "炼金科技亚龙", ELDER_DRAGON: "远古巨龙", UNKNOWN_DRAGON: "未标注龙种" };
+  const dragonOutcomeNames = { secured_contested: "交战后控下", secured_quiet: "无击杀窗口控下", lost_contested: "交战后丢龙", lost_quiet: "无击杀窗口丢龙" };
+  function metricByName(metric) { return currentRows().find((row) => row.m === metric); }
+  function renderDragon() {
+    const metrics = ["dragon_fight_participations", "dragon_secure_rate_when_present", "dragon_fight_kill_participation", "dragon_fight_survival_rate", "team_dragons_timeline", "dragon_fight_windows", "first_dragon_minute", "teamfight_participation_rate"];
+    $("dragonStatGrid").innerHTML = metrics.map((metric) => {
+      const row = metricByName(metric);
+      const [name] = label(metric);
+      return `<article class="dragon-stat"><span>${escapeHtml(name)}</span><strong>${row ? fmtMetric(metric, row.median) : "—"}</strong><small>${row ? `P25 ${fmtMetric(metric, row.p25)} · P75 ${fmtMetric(metric, row.p75)} · n=${row.n_clean}` : "样本不足"}</small></article>`;
+    }).join("");
+    const profile = extras.profiles?.[currentKey()];
+    $("dragonTypePanel").innerHTML = profile ? choiceRows(profile.dragonTypes, (value) => dragonTypeNames[value] || value) : `<div class="empty-panel">没有足够样本。</div>`;
+    $("dragonOutcomePanel").innerHTML = profile ? choiceRows(profile.dragonOutcomes, (value) => dragonOutcomeNames[value] || value) : `<div class="empty-panel">没有足够样本。</div>`;
+  }
+
+  function updateCategoryOptions() {
+    const select = $("metricCategory");
+    const previous = select.value || "全部类别";
+    const counts = new Map();
+    currentRows().filter((row) => !categoricalIdPattern.test(row.m)).forEach((row) => counts.set(metricCategory(row.m), (counts.get(metricCategory(row.m)) || 0) + 1));
+    select.innerHTML = `<option value="全部类别">全部类别</option>${[...counts].sort((a, b) => a[0].localeCompare(b[0], "zh-CN")).map(([category, count]) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}（${count}）</option>`).join("")}`;
+    select.value = [...select.options].some((option) => option.value === previous) ? previous : "全部类别";
+  }
+
+  function renderAllData() {
+    const category = $("metricCategory").value;
+    const search = $("allMetricSearch").value.trim().toLowerCase();
+    const showZero = $("showZeroMetrics").checked;
+    let rows = currentRows().filter((row) => !categoricalIdPattern.test(row.m));
+    if (category !== "全部类别") rows = rows.filter((row) => metricCategory(row.m) === category);
+    if (search) rows = rows.filter((row) => `${label(row.m)[0]} ${row.m} ${sourceOf(row.m)}`.toLowerCase().includes(search));
+    if (!showZero) rows = rows.filter((row) => !isZero(row));
+    rows.sort((a, b) => metricCategory(a.m).localeCompare(metricCategory(b.m), "zh-CN") || label(a.m)[0].localeCompare(label(b.m)[0], "zh-CN"));
+    $("allMetricCount").textContent = `显示 ${Math.min(rows.length, allLimit)} / ${rows.length} 字段`;
+    $("allMetricRows").innerHTML = rows.slice(0, allLimit).map((row) => `<tr><td class="metric-name-cell"><b>${escapeHtml(label(row.m)[0])}</b><code>${escapeHtml(row.m)}</code></td><td><span class="source-pill">${escapeHtml(sourceOf(row.m))}</span></td><td>${row.n_clean}/${row.n_raw}</td><td>${fmtMetric(row.m, row.p25)}</td><td>${fmtMetric(row.m, row.median)}</td><td>${fmtMetric(row.m, row.mean)}</td><td>${fmtMetric(row.m, row.p75)}</td></tr>`).join("");
+    $("allMetricMore").hidden = rows.length <= allLimit;
+  }
+
+  function renderProfile() {
+    const champion = $("championSelect").value;
+    const role = $("roleSelect").value;
+    const rows = currentRows();
+    const maxN = Math.max(0, ...rows.map((row) => row.n_raw));
+    const confidence = grade(maxN);
+    $("profileTitle").textContent = `${champion} · ${roles[role] || role}`;
+    $("championGlyph").textContent = champion[0];
+    $("sampleCount").textContent = maxN;
+    $("confidenceLabel").textContent = confidence[0];
+    $("confidenceBar").style.width = `${confidence[2]}%`;
+    $("confidenceText").textContent = maxN >= 30 ? `最多 ${maxN} 个有效样本，适合观察典型区间。` : `最多 ${maxN} 个样本，暂时只适合探索。`;
+    renderMetrics();
+    renderEnumerables();
+    renderDragon();
+    updateCategoryOptions();
+    renderAllData();
+  }
+
+  function updateRoles() {
+    const champion = $("championSelect").value;
+    const available = [...new Set(data.filter((row) => row.c === champion).map((row) => row.r))].sort();
+    $("roleSelect").innerHTML = available.map((role) => `<option value="${role}">${roles[role] || role}</option>`).join("");
+    limit = 12;
+    allLimit = 80;
+    renderProfile();
+  }
+
+  function populate() {
+    $("championSelect").innerHTML = champions.map((champion) => `<option value="${champion}"${champion === "Kaisa" ? " selected" : ""}>${champion}</option>`).join("");
+    updateRoles();
+  }
+
+  function coverage() {
+    const seen = new Map();
+    data.forEach((row) => {
+      const key = `${row.c}|${row.r}`;
+      seen.set(key, Math.max(seen.get(key) || 0, row.n_raw));
+    });
+    const top = [...seen].sort((a, b) => b[1] - a[1]).slice(0, 20);
+    const max = top[0]?.[1] || 1;
+    $("coverageList").innerHTML = top.map(([key, n]) => {
+      const [champion, role] = key.split("|");
+      return `<div class="coverage-row"><span>${champion} · ${roles[role] || role}</span><div class="coverage-track"><i style="width:${n / max * 100}%"></i></div><b>${n}</b></div>`;
+    }).join("");
+  }
+
+  $("championSelect").addEventListener("change", updateRoles);
+  $("roleSelect").addEventListener("change", () => { limit = 12; allLimit = 80; renderProfile(); });
+  $("metricSearch").addEventListener("input", () => { limit = 12; renderMetrics(); });
+  document.querySelectorAll(".phase-nav button").forEach((button) => button.addEventListener("click", () => {
+    document.querySelector(".phase-nav .active").classList.remove("active");
+    button.classList.add("active");
+    phase = button.dataset.phase;
+    limit = 12;
+    renderMetrics();
+  }));
+  $("loadMore").addEventListener("click", () => { limit += 24; renderMetrics(); });
+  $("metricCategory").addEventListener("change", () => { allLimit = 80; renderAllData(); });
+  $("allMetricSearch").addEventListener("input", () => { allLimit = 80; renderAllData(); });
+  $("showZeroMetrics").addEventListener("change", () => { allLimit = 80; renderAllData(); });
+  $("allMetricMore").addEventListener("click", () => { allLimit += 80; renderAllData(); });
+
+  const totalParameters = data.length;
+  $("rowCount").textContent = Number(core.meta?.player_match_rows || 0).toLocaleString("zh-CN");
+  $("playerCount").textContent = Number(core.meta?.players_sampled || 0).toLocaleString("zh-CN");
+  $("parameterCount").textContent = totalParameters.toLocaleString("zh-CN");
+  $("enumProfileCount").textContent = Number(extras.meta?.profileCount || 0).toLocaleString("zh-CN");
+  $("datasetState").textContent = `全量模型已载入 · ${totalParameters.toLocaleString("zh-CN")} 数值参数`;
+  populate();
+  coverage();
+})();
