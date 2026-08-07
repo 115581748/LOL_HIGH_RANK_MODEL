@@ -1,6 +1,26 @@
 (() => {
   const core = window.MODEL_DATA || { rows: [], meta: {} };
   const extras = window.MODEL_EXTRAS || { numericRows: [], profiles: {}, items: {}, spells: {}, runes: {}, runeStyles: {}, meta: {} };
+  const manifest = window.MODEL_MANIFEST || { parameters: {} };
+  const modelParameters = { ...(core.meta?.model_parameters || {}), ...(extras.meta?.modelParameters || {}), ...(manifest.parameters?.model || {}) };
+  const dashboardParameters = { ...(core.meta?.dashboard_parameters || {}), ...(extras.meta?.dashboardParameters || {}), ...(manifest.parameters?.dashboard || {}) };
+  const ui = {
+    metricInitialLimit: Number(dashboardParameters.metric_initial_limit || 12),
+    metricLoadMore: Number(dashboardParameters.metric_load_more || 24),
+    tableInitialLimit: Number(dashboardParameters.table_initial_limit || 80),
+    tableLoadMore: Number(dashboardParameters.table_load_more || 80),
+    coverageLimit: Number(dashboardParameters.coverage_limit || 20),
+    itemSlotLimit: Number(dashboardParameters.item_slot_limit || 4),
+    confidenceThresholds: dashboardParameters.confidence_thresholds || [
+      { min_samples: 50, label: "较高", css_class: "good", bar_percent: 100 },
+      { min_samples: 30, label: "中等", css_class: "medium", bar_percent: 72 },
+      { min_samples: 20, label: "初步", css_class: "medium", bar_percent: 52 },
+      { min_samples: 0, label: "探索性", css_class: "", bar_percent: 30 },
+    ],
+  };
+  const confidenceNarrativeMin = Number(
+    ui.confidenceThresholds.find((entry) => entry.label === "中等")?.min_samples || 30
+  );
   const data = [...(core.rows || []), ...(extras.numericRows || [])];
   const $ = (id) => document.getElementById(id);
   const roles = { TOP: "上路", JUNGLE: "打野", MIDDLE: "中路", BOTTOM: "下路", UTILITY: "辅助" };
@@ -58,8 +78,8 @@
   });
   const champions = [...new Set(data.map((row) => row.c))].sort();
   let phase = "early";
-  let limit = 12;
-  let allLimit = 80;
+  let limit = ui.metricInitialLimit;
+  let allLimit = ui.tableInitialLimit;
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -93,7 +113,11 @@
     if (metric === "first_dragon_minute" && Number.isFinite(number)) return `${number.toFixed(1)} 分`;
     return fmt(number);
   }
-  function grade(n) { return n >= 50 ? ["较高", "good", 100] : n >= 30 ? ["中等", "medium", 72] : n >= 20 ? ["初步", "medium", 52] : ["探索性", "", 30]; }
+  function grade(n) {
+    const ordered = [...ui.confidenceThresholds].sort((a, b) => Number(b.min_samples) - Number(a.min_samples));
+    const match = ordered.find((entry) => n >= Number(entry.min_samples)) || ordered[ordered.length - 1];
+    return [match.label, match.css_class, Number(match.bar_percent)];
+  }
   function pct(value, min, max) { return Math.max(0, Math.min(100, (value - min) / (max - min || 1) * 100)); }
   function isZero(row) { return [row.p25, row.median, row.mean, row.p75].every((value) => Number(value) === 0); }
 
@@ -186,14 +210,14 @@
     const profile = extras.profiles?.[currentKey()];
     const maxN = Math.max(0, ...currentRows().map((row) => row.n_raw));
     $("enumerableCount").textContent = profile ? `${maxN} 个玩家单局` : "无时间线样本";
-    $("buildOrderPanel").innerHTML = profile ? `<p class="choice-subhead">核心装备（总价 ≥ 1600）</p>${sequenceRows(profile.coreBuildOrders)}<p class="choice-subhead">完整结算装备顺序（含未合成组件）</p>${sequenceRows(profile.buildOrders)}` : `<div class="empty-panel">没有足够样本。</div>`;
+    $("buildOrderPanel").innerHTML = profile ? `<p class="choice-subhead">核心装备（总价 ≥ ${fmt(modelParameters.core_item_min_gold)}）</p>${sequenceRows(profile.coreBuildOrders)}<p class="choice-subhead">完整结算装备顺序（含未合成组件）</p>${sequenceRows(profile.buildOrders)}` : `<div class="empty-panel">没有足够样本。</div>`;
     $("starterPanel").innerHTML = sequenceRows(profile?.starters, "+");
     $("finalBuildPanel").innerHTML = sequenceRows(profile?.finalBuilds, "+");
     $("summonerPanel").innerHTML = profile ? tupleChoiceRows(profile.summoners, (ids) => ids.map((id) => extras.spells?.[id] || `技能 ${id}`).join(" + ")) : `<div class="empty-panel">没有足够样本。</div>`;
     $("runePanel").innerHTML = profile ? tupleChoiceRows(profile.runes, (ids) => `${extras.runes?.[ids[0]] || `基石 ${ids[0]}`} + ${extras.runeStyles?.[ids[1]] || `副系 ${ids[1]}`}`) : `<div class="empty-panel">没有足够样本。</div>`;
     if (!profile) { $("sampleEnumPanel").innerHTML = `<div class="empty-panel">没有足够样本。</div>`; $("itemSlotPanel").innerHTML = `<div class="empty-panel">没有足够样本。</div>`; return; }
     $("sampleEnumPanel").innerHTML = `<p class="choice-subhead">版本</p>${choiceRows(profile.patches)}<p class="choice-subhead">段位</p>${choiceRows(profile.ranks)}<p class="choice-subhead">结果</p>${choiceRows(profile.results)}`;
-    $("itemSlotPanel").innerHTML = profile.itemSlots.map((slot, index) => `<div class="slot-column"><h4>${index === 6 ? "饰品栏" : `物品栏 ${index + 1}`}</h4>${slot.slice(0, 4).map((entry) => { const item = extras.items?.[entry.value] || { name: `物品 ${entry.value}`, icon: `${entry.value}.png` }; const icon = `https://ddragon.leagueoflegends.com/cdn/${extras.meta?.itemVersion || "16.13.1"}/img/item/${item.icon}`; return `<div class="slot-item" title="ID ${escapeHtml(entry.value)}"><img src="${icon}" alt=""><span>${escapeHtml(item.name)}</span><b>${(entry.share * 100).toFixed(0)}%</b></div>`; }).join("")}</div>`).join("");
+    $("itemSlotPanel").innerHTML = profile.itemSlots.map((slot, index) => `<div class="slot-column"><h4>${index === 6 ? "饰品栏" : `物品栏 ${index + 1}`}</h4>${slot.slice(0, ui.itemSlotLimit).map((entry) => { const item = extras.items?.[entry.value] || { name: `物品 ${entry.value}`, icon: `${entry.value}.png` }; const icon = `https://ddragon.leagueoflegends.com/cdn/${extras.meta?.itemVersion || "16.13.1"}/img/item/${item.icon}`; return `<div class="slot-item" title="ID ${escapeHtml(entry.value)}"><img src="${icon}" alt=""><span>${escapeHtml(item.name)}</span><b>${(entry.share * 100).toFixed(0)}%</b></div>`; }).join("")}</div>`).join("");
   }
 
   const dragonTypeNames = { FIRE_DRAGON: "炼狱亚龙", WATER_DRAGON: "海洋亚龙", AIR_DRAGON: "云端亚龙", EARTH_DRAGON: "山脉亚龙", HEXTECH_DRAGON: "海克斯科技亚龙", CHEMTECH_DRAGON: "炼金科技亚龙", ELDER_DRAGON: "远古巨龙", UNKNOWN_DRAGON: "未标注龙种" };
@@ -245,7 +269,7 @@
     $("sampleCount").textContent = maxN;
     $("confidenceLabel").textContent = confidence[0];
     $("confidenceBar").style.width = `${confidence[2]}%`;
-    $("confidenceText").textContent = maxN >= 30 ? `最多 ${maxN} 个有效样本，适合观察典型区间。` : `最多 ${maxN} 个样本，暂时只适合探索。`;
+    $("confidenceText").textContent = maxN >= confidenceNarrativeMin ? `最多 ${maxN} 个有效样本，适合观察典型区间。` : `最多 ${maxN} 个样本，暂时只适合探索。`;
     renderMetrics();
     renderEnumerables();
     renderDragon();
@@ -257,8 +281,8 @@
     const champion = $("championSelect").value;
     const available = [...new Set(data.filter((row) => row.c === champion).map((row) => row.r))].sort();
     $("roleSelect").innerHTML = available.map((role) => `<option value="${role}">${roles[role] || role}</option>`).join("");
-    limit = 12;
-    allLimit = 80;
+    limit = ui.metricInitialLimit;
+    allLimit = ui.tableInitialLimit;
     renderProfile();
   }
 
@@ -273,7 +297,7 @@
       const key = `${row.c}|${row.r}`;
       seen.set(key, Math.max(seen.get(key) || 0, row.n_raw));
     });
-    const top = [...seen].sort((a, b) => b[1] - a[1]).slice(0, 20);
+    const top = [...seen].sort((a, b) => b[1] - a[1]).slice(0, ui.coverageLimit);
     const max = top[0]?.[1] || 1;
     $("coverageList").innerHTML = top.map(([key, n]) => {
       const [champion, role] = key.split("|");
@@ -282,27 +306,29 @@
   }
 
   $("championSelect").addEventListener("change", updateRoles);
-  $("roleSelect").addEventListener("change", () => { limit = 12; allLimit = 80; renderProfile(); });
-  $("metricSearch").addEventListener("input", () => { limit = 12; renderMetrics(); });
+  $("roleSelect").addEventListener("change", () => { limit = ui.metricInitialLimit; allLimit = ui.tableInitialLimit; renderProfile(); });
+  $("metricSearch").addEventListener("input", () => { limit = ui.metricInitialLimit; renderMetrics(); });
   document.querySelectorAll(".phase-nav button").forEach((button) => button.addEventListener("click", () => {
     document.querySelector(".phase-nav .active").classList.remove("active");
     button.classList.add("active");
     phase = button.dataset.phase;
-    limit = 12;
+    limit = ui.metricInitialLimit;
     renderMetrics();
   }));
-  $("loadMore").addEventListener("click", () => { limit += 24; renderMetrics(); });
-  $("metricCategory").addEventListener("change", () => { allLimit = 80; renderAllData(); });
-  $("allMetricSearch").addEventListener("input", () => { allLimit = 80; renderAllData(); });
-  $("showZeroMetrics").addEventListener("change", () => { allLimit = 80; renderAllData(); });
-  $("allMetricMore").addEventListener("click", () => { allLimit += 80; renderAllData(); });
+  $("loadMore").addEventListener("click", () => { limit += ui.metricLoadMore; renderMetrics(); });
+  $("metricCategory").addEventListener("change", () => { allLimit = ui.tableInitialLimit; renderAllData(); });
+  $("allMetricSearch").addEventListener("input", () => { allLimit = ui.tableInitialLimit; renderAllData(); });
+  $("showZeroMetrics").addEventListener("change", () => { allLimit = ui.tableInitialLimit; renderAllData(); });
+  $("allMetricMore").addEventListener("click", () => { allLimit += ui.tableLoadMore; renderAllData(); });
 
   const totalParameters = data.length;
   $("rowCount").textContent = Number(core.meta?.player_match_rows || 0).toLocaleString("zh-CN");
   $("playerCount").textContent = Number(core.meta?.players_sampled || 0).toLocaleString("zh-CN");
   $("parameterCount").textContent = totalParameters.toLocaleString("zh-CN");
   $("enumProfileCount").textContent = Number(extras.meta?.profileCount || 0).toLocaleString("zh-CN");
-  $("datasetState").textContent = `全量模型已载入 · ${totalParameters.toLocaleString("zh-CN")} 数值参数`;
+  const revision = manifest.revision ? ` · 版本 ${manifest.revision.slice(0, 8)}` : "";
+  $("datasetState").textContent = `全量模型已载入 · ${totalParameters.toLocaleString("zh-CN")} 数值参数${revision}`;
+  $("dragonMethod").textContent = `±${fmt(modelParameters.dragon_window_seconds)} 秒 · 龙坑半径 ${fmt(modelParameters.dragon_radius)}`;
   populate();
   coverage();
 })();

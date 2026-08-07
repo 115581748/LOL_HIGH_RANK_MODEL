@@ -68,7 +68,7 @@
       </div>
     </section>
     <section class="insight-section dragon-section" id="dragon-fights">
-      <div class="section-head"><div><p class="eyebrow">OBJECTIVE WINDOW MODEL</p><h2>龙团：从时间线推断，而不是凭印象</h2></div><span class="method-chip">±45 秒 · 龙坑半径 3400</span></div>
+      <div class="section-head"><div><p class="eyebrow">OBJECTIVE WINDOW MODEL</p><h2>龙团：从时间线推断，而不是凭印象</h2></div><span class="method-chip" id="dragonMethod">龙团参数加载中</span></div>
       <p class="section-intro">把每次击杀小龙视为一个目标窗口，再寻找其前后 45 秒内、龙坑附近的英雄击杀。该口径能枚举参团、击杀、死亡和控龙结果，但不能复原完整视野、语音决策或没有人头发生的拉扯。</p>
       <div id="dragonStatGrid" class="dragon-stat-grid"></div>
       <div class="dragon-splits">
@@ -100,8 +100,6 @@
     <aside class="boundary-note"><b>阅读边界</b><p>高于基准不一定更好：承伤、死亡和首个阵亡通常更低更理想；伤害与经济也会受位置、阵容、时长和胜负影响。本页是行为参照，不是隐藏 MMR 或单局评分。</p></aside>
   </main>
   <footer><span>非 Riot Games 官方项目</span><a href="index.html">返回机制说明 →</a></footer>
-  <script src="assets/model-data.js"></script>
-  <script src="assets/model-extras.js"></script>
-  <script src="app.js"></script>
+  <script src="assets/model-loader.js" data-app="app.js"></script>
 </body>
 </html>
