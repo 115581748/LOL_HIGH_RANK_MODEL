@@ -4,6 +4,7 @@
   const manifest = window.MODEL_MANIFEST || { parameters: {} };
   const modelParameters = { ...(core.meta?.model_parameters || {}), ...(extras.meta?.modelParameters || {}), ...(manifest.parameters?.model || {}) };
   const dashboardParameters = { ...(core.meta?.dashboard_parameters || {}), ...(extras.meta?.dashboardParameters || {}), ...(manifest.parameters?.dashboard || {}) };
+  const lateStartMinute = Number(manifest.parameters?.conditional_model?.late_phase_start_minute || 25);
   const ui = {
     metricInitialLimit: Number(dashboardParameters.metric_initial_limit || 12),
     metricLoadMore: Number(dashboardParameters.metric_load_more || 24),
@@ -28,11 +29,11 @@
   const names = {
     early_gold_15: ["15 分钟金币", "Gold @ 15"], level_at_15: ["15 分钟等级", "Champion level @ 15"], early_xp_15: ["15 分钟经验（原始）", "Raw XP @ 15"], early_cs_15: ["15 分钟补刀", "CS @ 15"],
     early_kills: ["前期击杀", "Kills 0–15"], early_deaths: ["前期死亡", "Deaths 0–15"], early_assists: ["前期助攻", "Assists 0–15"],
-    mid_gold_15_30: ["中期获得金币", "Gold 15–30"], mid_cs_15_30: ["中期补刀", "CS 15–30"], mid_champion_damage_15_30: ["中期英雄伤害", "Champion damage 15–30"],
-    mid_kills: ["中期击杀", "Kills 15–30"], mid_deaths: ["中期死亡", "Deaths 15–30"], mid_assists: ["中期助攻", "Assists 15–30"],
-    mid_team_turrets: ["中期团队推塔", "Team turrets 15–30"], mid_team_dragons: ["中期团队控龙", "Team dragons 15–30"],
-    late_champion_damage: ["后期英雄伤害", "Champion damage 30+"], late_damage_taken: ["后期承受伤害", "Damage taken 30+"], late_kills: ["后期击杀", "Kills 30+"],
-    late_deaths: ["后期死亡", "Deaths 30+"], late_assists: ["后期助攻", "Assists 30+"], late_teamfights: ["后期团战数", "Detected teamfights"],
+    mid_gold_gain: ["中期获得金币", `Gold 15–${lateStartMinute}`], mid_cs_gain: ["中期补刀", `CS 15–${lateStartMinute}`], mid_champion_damage: ["中期英雄伤害", `Champion damage 15–${lateStartMinute}`],
+    mid_kills: ["中期击杀", `Kills 15–${lateStartMinute}`], mid_deaths: ["中期死亡", `Deaths 15–${lateStartMinute}`], mid_assists: ["中期助攻", `Assists 15–${lateStartMinute}`],
+    mid_team_turrets: ["中期团队推塔", `Team turrets 15–${lateStartMinute}`], mid_team_dragons: ["中期团队控龙", `Team dragons 15–${lateStartMinute}`],
+    late_champion_damage: ["后期英雄伤害", `Champion damage ${lateStartMinute}+`], late_damage_taken: ["后期承受伤害", `Damage taken ${lateStartMinute}+`], late_kills: ["后期击杀", `Kills ${lateStartMinute}+`],
+    late_deaths: ["后期死亡", `Deaths ${lateStartMinute}+`], late_assists: ["后期助攻", `Assists ${lateStartMinute}+`], late_teamfights: ["后期团战数", "Detected teamfights"],
     late_teamfight_participations: ["后期团战参与", "Teamfight participation"], late_first_target_deaths: ["团战首个阵亡", "First-target deaths"],
     cs_per_min: ["每分钟补刀", "CS / min"], damage_per_min: ["每分钟英雄伤害", "Damage / min"], vision_per_min: ["每分钟视野分", "Vision / min"],
     challenge_killParticipation: ["击杀参与率", "Kill participation"], challenge_goldPerMinute: ["每分钟金币", "Gold / min"],
@@ -53,13 +54,13 @@
 
   const phaseMetrics = {
     early: ["early_gold_15", "level_at_15", "early_cs_15", "early_kills", "early_deaths", "early_assists", "challenge_laneMinionsFirst10Minutes", "challenge_maxCsAdvantageOnLaneOpponent"],
-    mid: ["mid_gold_15_30", "mid_cs_15_30", "mid_champion_damage_15_30", "mid_kills", "mid_deaths", "mid_assists", "mid_team_turrets", "mid_team_dragons"],
+    mid: ["mid_gold_gain", "mid_cs_gain", "mid_champion_damage", "mid_kills", "mid_deaths", "mid_assists", "mid_team_turrets", "mid_team_dragons"],
     late: ["late_champion_damage", "late_damage_taken", "late_kills", "late_deaths", "late_assists", "late_teamfights", "late_teamfight_participations", "late_first_target_deaths"],
     dragon: ["dragon_windows", "team_dragons_timeline", "enemy_dragons_timeline", "dragon_fight_windows", "dragon_fight_participations", "dragon_secure_rate_when_present", "dragon_fight_kill_participation", "dragon_fight_survival_rate", "dragon_fight_kills", "dragon_fight_deaths", "dragon_fight_assists", "first_dragon_minute"],
     global: ["cs_per_min", "damage_per_min", "vision_per_min", "challenge_killParticipation", "challenge_goldPerMinute", "challenge_damageTakenOnTeamPercentage", "challenge_teamDamagePercentage", "teamfights_total", "teamfight_participation_rate"],
   };
   const phaseCopy = {
-    early: ["EARLY GAME", "前 15 分钟行为基准"], mid: ["MID GAME", "15–30 分钟行为基准"], late: ["LATE GAME", "30 分钟后行为基准"],
+    early: ["EARLY GAME", "前 15 分钟行为基准"], mid: ["MID GAME", `15–${lateStartMinute} 分钟行为基准`], late: ["LATE GAME", `${lateStartMinute} 分钟后行为基准`],
     dragon: ["DRAGON FIGHT WINDOWS", "龙团与目标窗口"], global: ["FULL MATCH", "全局效率与贡献"], all: ["ALL NUMERIC FIELDS", "全部可用数值指标"],
   };
 
@@ -304,6 +305,9 @@
       return `<div class="coverage-row"><span>${champion} · ${roles[role] || role}</span><div class="coverage-track"><i style="width:${n / max * 100}%"></i></div><b>${n}</b></div>`;
     }).join("");
   }
+
+  document.querySelector('[data-phase="mid"]').textContent = `15–${lateStartMinute} 分钟`;
+  document.querySelector('[data-phase="late"]').textContent = `${lateStartMinute} 分钟后`;
 
   $("championSelect").addEventListener("change", updateRoles);
   $("roleSelect").addEventListener("change", () => { limit = ui.metricInitialLimit; allLimit = ui.tableInitialLimit; renderProfile(); });

@@ -1,17 +1,19 @@
 {
   "schemaVersion": 1,
-  "revision": "0b0855c4b5728c0c",
-  "generatedAtUtc": "2026-08-07T00:20:58.995851+00:00",
+  "revision": "cad7085afe511031",
+  "generatedAtUtc": "2026-08-07T01:41:46.821356+00:00",
   "assets": {
     "core": "assets/model-data.js",
-    "extras": "assets/model-extras.js"
+    "extras": "assets/model-extras.js",
+    "conditional": "assets/conditional-model.js",
+    "playerCase": "assets/player-case.js"
   },
   "dataset": {
     "platform": "oc1",
     "players_sampled": 1096,
     "unique_matches": 490,
     "player_match_rows": 4078,
-    "generated_at_utc": "2026-08-07T00:15:01.456222+00:00",
+    "generated_at_utc": "2026-08-07T01:38:08.936323+00:00",
     "unit_of_analysis": "one player in one ranked solo match",
     "outlier_rule": "per champion-position-metric Tukey 1.5*IQR",
     "model_parameters": {
@@ -60,6 +62,12 @@
           "bar_percent": 30
         }
       ]
+    },
+    "phase_definition": {
+      "EARLY": "0-15 minutes",
+      "MID": "15-25 minutes",
+      "LATE": "25+ minutes",
+      "transition": "15->25 minute team-gold state"
     }
   },
   "parameters": {
@@ -84,6 +92,24 @@
       "starter_purchase_seconds": 120,
       "core_item_min_gold": 1600,
       "categorical_top_k": 8
+    },
+    "conditional_model": {
+      "minimum_group_samples": 20,
+      "comparison_minimum_samples": 3,
+      "late_phase_start_minute": 25,
+      "high_confidence_samples": 100,
+      "medium_confidence_samples": 50,
+      "even_gold_threshold": 1000,
+      "strong_gold_threshold": 3000,
+      "winsor_lower_quantile": 0.01,
+      "winsor_upper_quantile": 0.99,
+      "stability_iqr_tolerance": 0.25
+    },
+    "player_case": {
+      "enabled": true,
+      "riot_id": "Addy The Great",
+      "tag_line": "OC",
+      "matches": 20
     },
     "dashboard": {
       "metric_initial_limit": 12,
