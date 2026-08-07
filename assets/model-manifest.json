@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "552ae4aaeb472734",
-  "generatedAtUtc": "2026-08-07T01:59:31.029936+00:00",
+  "revision": "467a736f1100e6c4",
+  "generatedAtUtc": "2026-08-07T11:46:21.552922+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
@@ -10,10 +10,10 @@
   },
   "dataset": {
     "platform": "oc1",
-    "players_sampled": 1096,
-    "unique_matches": 490,
-    "player_match_rows": 4078,
-    "generated_at_utc": "2026-08-07T01:38:08.936323+00:00",
+    "players_sampled": 1459,
+    "unique_matches": 715,
+    "player_match_rows": 6221,
+    "generated_at_utc": "2026-08-07T11:42:58.137750+00:00",
     "unit_of_analysis": "one player in one ranked solo match",
     "outlier_rule": "per champion-position-metric Tukey 1.5*IQR",
     "model_parameters": {
@@ -66,8 +66,7 @@
     "phase_definition": {
       "EARLY": "0-15 minutes",
       "MID": "15-25 minutes",
-      "LATE": "25+ minutes",
-      "transition": "15->25 minute team-gold state"
+      "LATE": "25+ minutes"
     }
   },
   "parameters": {
