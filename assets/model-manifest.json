@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "cad7085afe511031",
-  "generatedAtUtc": "2026-08-07T01:41:46.821356+00:00",
+  "revision": "552ae4aaeb472734",
+  "generatedAtUtc": "2026-08-07T01:59:31.029936+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
@@ -99,8 +99,6 @@
       "late_phase_start_minute": 25,
       "high_confidence_samples": 100,
       "medium_confidence_samples": 50,
-      "even_gold_threshold": 1000,
-      "strong_gold_threshold": 3000,
       "winsor_lower_quantile": 0.01,
       "winsor_upper_quantile": 0.99,
       "stability_iqr_tolerance": 0.25

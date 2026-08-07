@@ -1,3 +1,7 @@
+.filters {
+  grid-template-columns: repeat(5, 1fr);
+}
+
 .metric-table {
   min-width: 1180px;
 }

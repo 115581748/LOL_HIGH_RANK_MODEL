@@ -1,11 +1,10 @@
 (() => {
-  const model = window.CONDITIONAL_MODEL || { meta: {}, dimensions: {}, profiles: {}, transitions: {} };
+  const model = window.CONDITIONAL_MODEL || { meta: {}, dimensions: {}, profiles: {}, comparisonProfiles: {} };
   const playerCase = window.PLAYER_CASE || { meta: {}, summaries: {}, matches: [] };
   const $ = (id) => document.getElementById(id);
   const lateStartMinute = Number(model.meta?.parameters?.late_phase_start_minute || 25);
 
   const phaseNames = { EARLY: "前期 0–15", MID: `中期 15–${lateStartMinute}`, LATE: `后期 ${lateStartMinute}+` };
-  const stateNames = { ALL: "全部局势", STRONG_BEHIND: "明显落后", BEHIND: "轻微落后", EVEN: "均势", AHEAD: "轻微领先", STRONG_AHEAD: "明显领先" };
   const rankNames = { ALL: "D4+ 整体", DIAMOND_IV_II: "Diamond IV–II", DIAMOND_I: "Diamond I", MASTER_PLUS: "Master+" };
   const positionNames = { TOP: "上路", JUNGLE: "打野", MIDDLE: "中路", BOTTOM: "下路", UTILITY: "辅助" };
   const scopeNames = { EXACT: "英雄 × 位置 × 版本", CHAMPION_ALL_PATCH: "英雄 × 位置 × 跨版本", ROLE_PATCH: "位置 × 版本", ROLE_ALL: "位置 × 跨版本" };
@@ -44,7 +43,7 @@
 
   function key(parts) { return parts.join("|"); }
 
-  function candidateKeys(phase, state) {
+  function candidateKeys(phase) {
     const patch = $("patchFilter").value;
     const champion = $("championFilter").value;
     const position = $("positionFilter").value;
@@ -52,22 +51,17 @@
     const bands = selectedBand === "ALL" ? ["ALL"] : [selectedBand, "ALL"];
     const candidates = [];
     bands.forEach((band) => {
-      candidates.push(key(["EXACT", patch, champion, position, band, phase, state]));
-      candidates.push(key(["CHAMPION_ALL_PATCH", "ALL", champion, position, band, phase, state]));
-      candidates.push(key(["ROLE_PATCH", patch, "ALL", position, band, phase, state]));
-      candidates.push(key(["ROLE_ALL", "ALL", "ALL", position, band, phase, state]));
+      candidates.push(key(["EXACT", patch, champion, position, band, phase]));
+      candidates.push(key(["CHAMPION_ALL_PATCH", "ALL", champion, position, band, phase]));
+      candidates.push(key(["ROLE_PATCH", patch, "ALL", position, band, phase]));
+      candidates.push(key(["ROLE_ALL", "ALL", "ALL", position, band, phase]));
     });
     return candidates;
   }
 
-  function resolve(collection, phase, state) {
-    for (const candidate of candidateKeys(phase, state)) {
+  function resolve(collection, phase) {
+    for (const candidate of candidateKeys(phase)) {
       if (collection[candidate]) return { key: candidate, value: collection[candidate] };
-    }
-    if (state !== "ALL") {
-      for (const candidate of candidateKeys(phase, "ALL")) {
-        if (collection[candidate]) return { key: candidate, value: collection[candidate], stateFallback: true };
-      }
     }
     return null;
   }
@@ -76,14 +70,11 @@
     const champion = $("championFilter").value;
     const position = $("positionFilter").value;
     const patch = $("patchFilter").value;
-    const state = $("stateFilter").value;
-    const stateField = phase === "LATE" ? "stateLateStart" : "state15";
     const rows = (playerCase.matches || []).filter((match) => (
       match.champion === champion
       && match.position === position
       && match.patch === patch
       && (phase !== "LATE" || Number(match.durationMin) >= lateStartMinute)
-      && (state === "ALL" || match[stateField] === state)
     ));
     if (!rows.length) return null;
     const metrics = {};
@@ -121,26 +112,20 @@
     return `${gap > 0 ? "+" : ""}${gap.toFixed(1)}%`;
   }
 
-  function heroBaselineKeys(match, phase, state) {
+  function heroBaselineKeys(match, phase) {
     const selectedBand = $("rankFilter").value;
     const bands = selectedBand === "ALL" ? ["ALL"] : [selectedBand, "ALL"];
     const candidates = [];
     bands.forEach((band) => {
-      candidates.push(key(["EXACT", match.patch, match.champion, match.position, band, phase, state]));
-      candidates.push(key(["CHAMPION_ALL_PATCH", "ALL", match.champion, match.position, band, phase, state]));
+      candidates.push(key(["CHAMPION_ALL_PATCH", "ALL", match.champion, match.position, band, phase]));
     });
     return candidates;
   }
 
   function resolveHeroBaseline(match, phase) {
-    const stateField = phase === "LATE" ? "stateLateStart" : "state15";
-    const requestedState = match[stateField] || "ALL";
-    const states = requestedState === "ALL" ? ["ALL"] : [requestedState, "ALL"];
-    for (const state of states) {
-      for (const candidate of heroBaselineKeys(match, phase, state)) {
-        const profile = model.comparisonProfiles?.[candidate] || model.profiles?.[candidate];
-        if (profile) return { value: profile, stateFallback: state !== requestedState, requestedState };
-      }
+    for (const candidate of heroBaselineKeys(match, phase)) {
+      const profile = model.comparisonProfiles?.[candidate] || model.profiles?.[candidate];
+      if (profile) return { value: profile };
     }
     return null;
   }
@@ -161,7 +146,7 @@
     const phase = $("caseComparisonPhase").value;
     const metrics = model.phaseMetrics?.[phase] || [];
     const matches = playerCase.matches || [];
-    $("matchComparisonHead").innerHTML = `<tr><th>场次</th><th>英雄 / 位置</th><th>结果</th><th>补丁 · 局势</th><th>同英雄基准</th>${metrics.map((metric) => `<th title="${escapeHtml(metric)}">${escapeHtml(shortMetric(metric))}</th>`).join("")}</tr>`;
+    $("matchComparisonHead").innerHTML = `<tr><th>场次</th><th>英雄 / 位置</th><th>结果</th><th>补丁</th><th>同英雄固定基准</th>${metrics.map((metric) => `<th title="${escapeHtml(metric)}">${escapeHtml(shortMetric(metric))}</th>`).join("")}</tr>`;
     let eligible = 0;
     let resolvedCount = 0;
     $("matchComparisonRows").innerHTML = matches.length ? matches.map((match) => {
@@ -169,16 +154,15 @@
       const resolved = reachedPhase ? resolveHeroBaseline(match, phase) : null;
       if (reachedPhase) eligible += 1;
       if (resolved) resolvedCount += 1;
-      const state = phase === "LATE" ? match.stateLateStart : match.state15;
       const baseline = !reachedPhase
         ? `<span class="no-baseline">未到 ${lateStartMinute} 分钟</span>`
         : resolved
-          ? `<b>${escapeHtml(match.champion)} · ${escapeHtml(scopeNames[resolved.value.scope])}</b><small>n=${resolved.value.sampleSize} · ${escapeHtml(confidenceNames[resolved.value.confidence])} · ${escapeHtml(rankNames[resolved.value.rankBand] || resolved.value.rankBand)}${resolved.stateFallback ? " · 局势回退全部" : ""}</small>`
+          ? `<b>${escapeHtml(match.champion)} · ${escapeHtml(scopeNames[resolved.value.scope])}</b><small>n=${resolved.value.sampleSize} · ${escapeHtml(confidenceNames[resolved.value.confidence])} · ${escapeHtml(rankNames[resolved.value.rankBand] || resolved.value.rankBand)}</small>`
           : `<span class="no-baseline">无同英雄基准</span>`;
-      return `<tr><td><b>${escapeHtml(match.matchRef)}</b><small>${fmt(match.durationMin)} 分钟</small></td><td><b>${escapeHtml(match.champion)}</b><small>${escapeHtml(positionNames[match.position] || match.position)}</small></td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td><b>${escapeHtml(match.patch)}</b><small>${escapeHtml(stateNames[state] || state || "—")}</small></td><td class="baseline-cell">${baseline}</td>${metrics.map((metric) => matchMetricCell(match, metric, resolved?.value)).join("")}</tr>`;
+      return `<tr><td><b>${escapeHtml(match.matchRef)}</b><small>${fmt(match.durationMin)} 分钟</small></td><td><b>${escapeHtml(match.champion)}</b><small>${escapeHtml(positionNames[match.position] || match.position)}</small></td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td><b>${escapeHtml(match.patch)}</b></td><td class="baseline-cell">${baseline}</td>${metrics.map((metric) => matchMetricCell(match, metric, resolved?.value)).join("")}</tr>`;
     }).join("") : `<tr><td class="empty" colspan="${metrics.length + 5}">尚未载入逐局案例数据。</td></tr>`;
     const phaseEligible = phase === "LATE" ? `达到 ${lateStartMinute} 分钟 ${eligible}/${matches.length} 场` : `${eligible} 场`;
-    $("matchComparisonSummary").textContent = `${phaseNames[phase]} · ${phaseEligible} · 找到同英雄基准 ${resolvedCount}/${eligible || 0} 场 · 段位口径 ${rankNames[$("rankFilter").value]} · 去重后最低样本 ${model.meta.parameters?.comparison_minimum_samples || 3}`;
+    $("matchComparisonSummary").textContent = `${phaseNames[phase]} · ${phaseEligible} · 找到同英雄固定基准 ${resolvedCount}/${eligible || 0} 场 · 英雄与位置相同、跨版本合并 · 段位口径 ${rankNames[$("rankFilter").value]} · 去重后最低样本 ${model.meta.parameters?.comparison_minimum_samples || 3}`;
   }
 
   function approximatePercentile(value, stats) {
@@ -205,8 +189,8 @@
       return;
     }
     const profile = resolved.value;
-    const requested = `${$("championFilter").value} · ${positionNames[$("positionFilter").value]} · ${$("patchFilter").value} · ${rankNames[$("rankFilter").value]} · ${stateNames[$("stateFilter").value]}`;
-    const actual = `${scopeNames[profile.scope]}${profile.rankBand === "ALL" ? " · D4+整体" : ` · ${rankNames[profile.rankBand]}`}${resolved.stateFallback ? " · 已回退全部局势" : ""}`;
+    const requested = `${$("championFilter").value} · ${positionNames[$("positionFilter").value]} · ${$("patchFilter").value} · ${rankNames[$("rankFilter").value]}`;
+    const actual = `${scopeNames[profile.scope]}${profile.rankBand === "ALL" ? " · D4+整体" : ` · ${rankNames[profile.rankBand]}`}`;
     $("resolutionPanel").innerHTML = `<span class="scope">${escapeHtml(scopeNames[profile.scope])}</span><span class="path">请求：${escapeHtml(requested)}<br>实际：${escapeHtml(actual)} · n=${profile.sampleSize}</span><span class="confidence">${escapeHtml(confidenceNames[profile.confidence])}</span>`;
   }
 
@@ -268,20 +252,6 @@
     $("stabilityList").innerHTML = stability.metrics.map((item) => `<div class="stability-row"><span>${escapeHtml(metricNames[item.metric] || item.metric)}</span><b>${fmtMetric(item.metric, item.earlierMedian)}</b><i></i><b>${fmtMetric(item.metric, item.recentMedian)}</b><span class="${item.stable ? "stable" : "shift"}">${item.stable ? "稳定" : `位移 ${item.normalizedShift.toFixed(2)} IQR`}</span></div>`).join("");
   }
 
-  function renderTransition() {
-    const state = $("stateFilter").value;
-    const resolved = resolve(model.transitions || {}, "TRANSITION", state);
-    if (!resolved) {
-      $("transitionSample").textContent = "无可用转移模型";
-      $("transitionFlow").innerHTML = `<div class="empty">当前上下文没有达到最低转移样本。</div>`;
-      return;
-    }
-    const transition = resolved.value;
-    $("transitionSample").textContent = `${scopeNames[transition.scope]} · n=${transition.sampleSize}`;
-    const fromName = transition.fromState === "ALL" ? "全部 15 分钟状态" : stateNames[transition.fromState];
-    $("transitionFlow").innerHTML = `<div class="transition-source"><span>15 分钟起点</span><strong>${escapeHtml(fromName)}</strong><small>n=${transition.sampleSize}</small></div><div class="transition-arrow">→</div>${transition.outcomes.map((outcome) => `<div class="transition-target"><span>${lateStartMinute} 分钟</span><strong>${escapeHtml(stateNames[outcome.state])}</strong><small>${outcome.n} 场 · ${(outcome.share * 100).toFixed(1)}%</small><i style="width:${Math.max(4, outcome.share * 100)}%"></i></div>`).join("")}`;
-  }
-
   function renderCase() {
     const meta = playerCase.meta || {};
     $("caseMatches").textContent = Number(meta.rankedSoloMatches || 0);
@@ -293,19 +263,17 @@
       ? `艾希下路共 ${meta.asheBottomMatches} 场。上表差值统一按“玩家样本中位数 − 当前高分段基线中位数”计算，不附加主观定性。`
       : "尚未载入案例数据；提供有效 Key 后可重新生成。";
     const matches = playerCase.matches || [];
-    $("recentMatches").innerHTML = matches.length ? matches.map((match) => `<tr><td>${escapeHtml(match.matchRef)}</td><td>${escapeHtml(match.champion)}</td><td>${escapeHtml(positionNames[match.position] || match.position)}</td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td>${escapeHtml(stateNames[match.state15] || match.state15)}</td><td>${fmt(match.early_cs_15)}</td><td>${fmt(match.mid_cs_gain)}</td><td>${fmt(match.mid_champion_damage)}</td><td>${fmt(match.late_first_target_deaths)}</td></tr>`).join("") : `<tr><td class="empty" colspan="9">尚未载入逐局案例数据。</td></tr>`;
+    $("recentMatches").innerHTML = matches.length ? matches.map((match) => `<tr><td>${escapeHtml(match.matchRef)}</td><td>${escapeHtml(match.champion)}</td><td>${escapeHtml(positionNames[match.position] || match.position)}</td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td>${fmt(match.early_cs_15)}</td><td>${fmt(match.mid_cs_gain)}</td><td>${fmt(match.mid_champion_damage)}</td><td>${fmt(match.late_first_target_deaths)}</td></tr>`).join("") : `<tr><td class="empty" colspan="8">尚未载入逐局案例数据。</td></tr>`;
     renderMatchComparisons();
   }
 
   function render() {
     const phase = $("phaseFilter").value;
-    const state = $("stateFilter").value;
-    const resolved = resolve(model.profiles || {}, phase, state);
+    const resolved = resolve(model.profiles || {}, phase);
     renderResolution(resolved);
     renderDistributions(resolved?.value);
     renderCorrelation(resolved?.value);
     renderStability(resolved?.value);
-    renderTransition();
     renderMatchComparisons();
   }
 
@@ -316,15 +284,14 @@
     $("patchFilter").innerHTML = (dimensions.patches || []).map((patch, index) => option(patch, patch, index === 0)).join("");
     $("rankFilter").innerHTML = (dimensions.rankBands || []).map((band) => option(band, rankNames[band] || band, band === "ALL")).join("");
     $("phaseFilter").innerHTML = (dimensions.phases || []).map((phase) => option(phase, phaseNames[phase] || phase, phase === "EARLY")).join("");
-    $("stateFilter").innerHTML = (dimensions.states || []).map((state) => option(state, stateNames[state] || state, state === "ALL")).join("");
     $("caseComparisonPhase").innerHTML = (dimensions.phases || []).map((phase) => option(phase, phaseNames[phase] || phase, phase === "EARLY")).join("");
-    ["championFilter", "positionFilter", "patchFilter", "rankFilter", "phaseFilter", "stateFilter"].forEach((id) => $(id).addEventListener("change", render));
+    ["championFilter", "positionFilter", "patchFilter", "rankFilter", "phaseFilter"].forEach((id) => $(id).addEventListener("change", render));
     $("caseComparisonPhase").addEventListener("change", renderMatchComparisons);
   }
 
   $("sourceRows").textContent = Number(model.meta?.sourceRows || 0).toLocaleString("zh-CN");
   $("profileCount").textContent = Number(model.meta?.profileCount || 0).toLocaleString("zh-CN");
-  $("transitionCount").textContent = Number(model.meta?.transitionProfileCount || 0).toLocaleString("zh-CN");
+  $("comparisonProfileCount").textContent = Number(model.meta?.comparisonProfileCount || 0).toLocaleString("zh-CN");
   $("minimumSamples").textContent = Number(model.meta?.parameters?.minimum_group_samples || 0);
   $("modelLoadState").textContent = `模型已载入 · ${Number(model.meta?.profileCount || 0).toLocaleString("zh-CN")} 个条件分布`;
   populate();
