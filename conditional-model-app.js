@@ -254,13 +254,23 @@
 
   function renderCase() {
     const meta = playerCase.meta || {};
+    const riotId = String(meta.riotId || "Geolonwe#OC");
+    const separator = riotId.lastIndexOf("#");
+    const gameName = separator >= 0 ? riotId.slice(0, separator) : riotId;
+    const tagLine = separator >= 0 ? riotId.slice(separator + 1) : "OC";
+    const primaryPosition = meta.primaryPosition || "—";
+    const primaryChampion = meta.primaryChampion || "—";
+    $("casePlayerLink").textContent = `${riotId} ↗`;
+    $("casePlayerLink").href = `https://op.gg/lol/summoners/oce/${encodeURIComponent(`${gameName}-${tagLine}`)}`;
     $("caseMatches").textContent = Number(meta.rankedSoloMatches || 0);
-    $("caseBottom").textContent = Number(meta.bottomMatches || 0);
-    $("caseAshe").textContent = Number(meta.asheBottomMatches || 0);
+    $("casePrimaryPositionLabel").textContent = primaryPosition === "—" ? "主位置" : positionNames[primaryPosition] || primaryPosition;
+    $("casePrimaryPositionMatches").textContent = Number(meta.primaryPositionMatches || 0);
+    $("casePrimaryChampionLabel").textContent = primaryChampion === "—" ? "主英雄" : primaryChampion;
+    $("casePrimaryChampionMatches").textContent = Number(meta.primaryChampionPositionMatches || 0);
     const ready = meta.status !== "WAITING_FOR_RIOT_KEY" && Number(meta.rankedSoloMatches) > 0;
     $("caseStatus").textContent = ready ? `Riot API 已载入 · ${meta.rankedSoloMatches} 场` : "等待有效 Riot Key";
     $("caseMessage").textContent = ready
-      ? `艾希下路共 ${meta.asheBottomMatches} 场。上表差值统一按“玩家样本中位数 − 当前高分段基线中位数”计算，不附加主观定性。`
+      ? `${primaryChampion} ${positionNames[primaryPosition] || primaryPosition}共 ${meta.primaryChampionPositionMatches} 场。上表差值统一按“玩家样本中位数 − 当前高分段基线中位数”计算，不附加主观定性。`
       : "尚未载入案例数据；提供有效 Key 后可重新生成。";
     const matches = playerCase.matches || [];
     $("recentMatches").innerHTML = matches.length ? matches.map((match) => `<tr><td>${escapeHtml(match.matchRef)}</td><td>${escapeHtml(match.champion)}</td><td>${escapeHtml(positionNames[match.position] || match.position)}</td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td>${fmt(match.early_cs_15)}</td><td>${fmt(match.mid_cs_gain)}</td><td>${fmt(match.mid_champion_damage)}</td><td>${fmt(match.late_first_target_deaths)}</td></tr>`).join("") : `<tr><td class="empty" colspan="8">尚未载入逐局案例数据。</td></tr>`;
@@ -279,8 +289,10 @@
 
   function populate() {
     const dimensions = model.dimensions || {};
-    $("championFilter").innerHTML = (dimensions.champions || []).map((champion) => option(champion, champion, champion === "Ashe")).join("");
-    $("positionFilter").innerHTML = (dimensions.positions || []).map((position) => option(position, positionNames[position] || position, position === "BOTTOM")).join("");
+    const defaultChampion = playerCase.meta?.primaryChampion || "Ashe";
+    const defaultPosition = playerCase.meta?.primaryPosition || "BOTTOM";
+    $("championFilter").innerHTML = (dimensions.champions || []).map((champion) => option(champion, champion, champion === defaultChampion)).join("");
+    $("positionFilter").innerHTML = (dimensions.positions || []).map((position) => option(position, positionNames[position] || position, position === defaultPosition)).join("");
     $("patchFilter").innerHTML = (dimensions.patches || []).map((patch, index) => option(patch, patch, index === 0)).join("");
     $("rankFilter").innerHTML = (dimensions.rankBands || []).map((band) => option(band, rankNames[band] || band, band === "ALL")).join("");
     $("phaseFilter").innerHTML = (dimensions.phases || []).map((phase) => option(phase, phaseNames[phase] || phase, phase === "EARLY")).join("");
