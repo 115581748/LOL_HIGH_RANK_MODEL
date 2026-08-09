@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "15906d541a10e829",
-  "generatedAtUtc": "2026-08-08T19:36:44.269249+00:00",
+  "revision": "a6cbfffee52ba1b9",
+  "generatedAtUtc": "2026-08-09T14:18:26.831664+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
@@ -10,10 +10,10 @@
   },
   "dataset": {
     "platform": "oc1",
-    "players_sampled": 1861,
-    "unique_matches": 1056,
-    "player_match_rows": 9588,
-    "generated_at_utc": "2026-08-08T19:35:05.967255+00:00",
+    "players_sampled": 3656,
+    "unique_matches": 4161,
+    "player_match_rows": 33564,
+    "generated_at_utc": "2026-08-09T14:05:04.194469+00:00",
     "unit_of_analysis": "one player in one ranked solo match",
     "outlier_rule": "per champion-position-metric Tukey 1.5*IQR",
     "model_parameters": {
