@@ -3,6 +3,8 @@
   const playerCase = window.PLAYER_CASE || { meta: {}, summaries: {}, matches: [] };
   const $ = (id) => document.getElementById(id);
   const lateStartMinute = Number(model.meta?.parameters?.late_phase_start_minute || 25);
+  const playerServiceBase = "api/player-case";
+  const loadedRevision = String(window.MODEL_MANIFEST?.revision || "");
 
   const phaseNames = { EARLY: "前期 0–15", MID: `中期 15–${lateStartMinute}`, LATE: `后期 ${lateStartMinute}+` };
   const rankNames = { ALL: "D4+ 整体", DIAMOND_IV_II: "Diamond IV–II", DIAMOND_I: "Diamond I", MASTER_PLUS: "Master+" };
@@ -277,6 +279,88 @@
     renderMatchComparisons();
   }
 
+  function setPlayerServiceState(message, state = "checking") {
+    const target = $("playerServiceState");
+    if (!target) return;
+    target.dataset.state = state;
+    target.querySelector("span").textContent = message;
+  }
+
+  function setPlayerControlsEnabled(enabled) {
+    $("playerSwitchButton").disabled = !enabled;
+    $("playerRefreshButton").disabled = !enabled;
+  }
+
+  async function readPlayerServiceStatus() {
+    try {
+      const response = await fetch(`${playerServiceBase}/status?refresh=${Date.now()}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const status = await response.json();
+      if (!$("playerRiotId").value && status.currentRiotId) $("playerRiotId").value = status.currentRiotId;
+      const keyExpired = Boolean(status.lastError && /401|apikey/i.test(status.lastError));
+      const usable = Boolean(status.canRefresh) && !status.busy && !keyExpired;
+      setPlayerControlsEnabled(usable);
+      if (status.busy) {
+        setPlayerServiceState("正在拉取玩家数据或补建英雄基准…", "busy");
+      } else if (!status.canRefresh) {
+        setPlayerServiceState("本地服务在线，但服务端没有 RIOT_API_KEY。", "error");
+      } else if (status.lastError) {
+        setPlayerServiceState(keyExpired ? "安全服务在线，但 Riot API Key 已失效。" : `上次自动更新失败：${status.lastError}`, "error");
+      } else {
+        setPlayerServiceState(`安全更新服务在线 · 每 ${status.autoRefreshMinutes} 分钟自动检查`, "online");
+      }
+      if (status.revision && loadedRevision && status.revision !== loadedRevision) {
+        setPlayerServiceState("检测到玩家数据更新，正在重新载入页面…", "busy");
+        window.setTimeout(() => window.location.reload(), 350);
+      }
+      return true;
+    } catch (error) {
+      setPlayerControlsEnabled(false);
+      setPlayerServiceState("当前为静态只读站；从本地安全服务打开此页即可切换玩家。", "offline");
+      return false;
+    }
+  }
+
+  async function updatePlayerCase(action, riotId = null) {
+    setPlayerControlsEnabled(false);
+    setPlayerServiceState(action === "switch" ? "正在切换玩家并检查英雄基准…" : "正在检查当前玩家的新对局…", "busy");
+    try {
+      const response = await fetch(`${playerServiceBase}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(riotId ? { riotId } : {}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      if (result.changed) {
+        setPlayerServiceState(`${result.riotId} 已更新，正在重新载入…`, "online");
+        window.setTimeout(() => window.location.reload(), 350);
+      } else {
+        setPlayerServiceState(`${result.riotId} 已是最新数据，没有发现新对局。`, "online");
+        setPlayerControlsEnabled(true);
+      }
+    } catch (error) {
+      setPlayerServiceState(`更新失败：${error.message}`, "error");
+      setPlayerControlsEnabled(true);
+    }
+  }
+
+  function initPlayerControls() {
+    $("playerSwitchForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const riotId = $("playerRiotId").value.trim();
+      if (!riotId) {
+        setPlayerServiceState("请输入玩家名#TAG。", "error");
+        return;
+      }
+      updatePlayerCase("switch", riotId);
+    });
+    $("playerRefreshButton").addEventListener("click", () => updatePlayerCase("refresh"));
+    readPlayerServiceStatus().then((available) => {
+      if (available) window.setInterval(readPlayerServiceStatus, 30_000);
+    });
+  }
+
   function render() {
     const phase = $("phaseFilter").value;
     const resolved = resolve(model.profiles || {}, phase);
@@ -309,4 +393,5 @@
   populate();
   renderCase();
   render();
+  initPlayerControls();
 })();

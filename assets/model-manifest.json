@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "b9e318c41273dadb",
-  "generatedAtUtc": "2026-08-09T17:21:40.178486+00:00",
+  "revision": "f99cb083020f3560",
+  "generatedAtUtc": "2026-08-09T20:09:35.338953+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
@@ -10,10 +10,10 @@
   },
   "dataset": {
     "platform": "oc1",
-    "players_sampled": 4359,
-    "unique_matches": 7277,
-    "player_match_rows": 62613,
-    "generated_at_utc": "2026-08-09T17:07:43.828180+00:00",
+    "players_sampled": 8536,
+    "unique_matches": 11038,
+    "player_match_rows": 84144,
+    "generated_at_utc": "2026-08-09T19:55:01.783285+00:00",
     "unit_of_analysis": "one player in one ranked solo match",
     "outlier_rule": "per champion-position-metric Tukey 1.5*IQR",
     "model_parameters": {
@@ -62,11 +62,6 @@
           "bar_percent": 30
         }
       ]
-    },
-    "phase_definition": {
-      "EARLY": "0-15 minutes",
-      "MID": "15-25 minutes",
-      "LATE": "25+ minutes"
     }
   },
   "parameters": {
@@ -106,7 +101,8 @@
       "enabled": true,
       "riot_id": "Geolonwe",
       "tag_line": "OC",
-      "matches": 20
+      "matches": 20,
+      "auto_refresh_minutes": 10
     },
     "dashboard": {
       "metric_initial_limit": 12,

@@ -70,6 +70,14 @@
 
     <section class="section-block case-section">
       <div class="section-head"><div><p class="eyebrow">LOCAL PLAYER CASE</p><h2><a class="player-link" id="casePlayerLink" href="https://op.gg/lol/summoners/oce/Geolonwe-OC" target="_blank" rel="noreferrer">Geolonwe#OC ↗</a></h2></div><span id="caseStatus">—</span></div>
+      <div class="player-control">
+        <form id="playerSwitchForm">
+          <label for="playerRiotId"><span>切换玩家</span><input id="playerRiotId" name="riotId" type="text" maxlength="81" placeholder="玩家名#TAG 或 OP.GG 链接" autocomplete="off"></label>
+          <button id="playerSwitchButton" type="submit" disabled>切换并更新</button>
+          <button id="playerRefreshButton" class="secondary" type="button" disabled>刷新当前玩家</button>
+        </form>
+        <div class="player-service-state" id="playerServiceState" data-state="checking" aria-live="polite"><i></i><span>正在检查安全更新服务…</span></div>
+      </div>
       <div class="case-grid">
         <article class="panel prior-panel">
           <div class="panel-head"><div><span>COMPARISON RULE</span><h3>只呈现可复算的数据差距</h3></div></div>
