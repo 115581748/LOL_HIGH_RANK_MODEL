@@ -19,6 +19,32 @@
     late_champion_damage: "后期英雄伤害", late_damage_taken: "后期承伤", late_kills: "后期击杀", late_deaths: "后期死亡",
     late_assists: "后期助攻", late_teamfight_participation_rate: "后期团战参与率", late_first_target_deaths: "后期首个阵亡",
   };
+  Object.assign(metricNames, {
+    early_gold_diff_vs_enemy_jungle: "15 分钟对位经济差",
+    early_xp_diff_vs_enemy_jungle: "15 分钟对位经验差",
+    early_cs_diff_vs_enemy_jungle: "15 分钟对位 CS 差",
+    early_gank_takedowns: "前 15 分钟有效 Gank",
+    early_gank_lanes: "前 15 分钟影响路线数",
+    early_first_gank_minute: "首次有效 Gank 分钟",
+    early_enemy_jungle_takedowns: "前 15 分钟对敌方打野击杀参与",
+    early_kill_participation_rate: "前 15 分钟团队击杀参与率",
+    early_team_dragons: "前 15 分钟团队小龙",
+    early_team_void_grubs: "前 15 分钟团队虚空巢虫",
+    early_team_rift_heralds: "前 15 分钟团队峡谷先锋",
+    early_personal_epic_secures: "前 15 分钟个人史诗野怪击杀",
+    early_gank_takedown_diff_vs_enemy_jungle: "有效 Gank 对位差",
+    early_epic_monster_diff_vs_enemy_jungle: "史诗野怪对位差",
+    mid_gank_takedowns: "中期有效 Gank",
+    mid_gank_lanes: "中期影响路线数",
+    mid_first_gank_minute: "中期首次有效 Gank 分钟",
+    mid_enemy_jungle_takedowns: "中期对敌方打野击杀参与",
+    mid_kill_participation_rate: "中期团队击杀参与率",
+    mid_team_void_grubs: "中期团队虚空巢虫",
+    mid_team_rift_heralds: "中期团队峡谷先锋",
+    mid_personal_epic_secures: "中期个人史诗野怪击杀",
+    mid_gank_takedown_diff_vs_enemy_jungle: "中期有效 Gank 对位差",
+    mid_epic_monster_diff_vs_enemy_jungle: "中期史诗野怪对位差",
+  });
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -44,6 +70,13 @@
   }
 
   function key(parts) { return parts.join("|"); }
+
+  function metricsForPhase(phase, position) {
+    return [
+      ...(model.phaseMetrics?.[phase] || []),
+      ...(model.positionPhaseMetrics?.[position]?.[phase] || []),
+    ];
+  }
 
   function candidateKeys(phase) {
     const patch = $("patchFilter").value;
@@ -80,7 +113,7 @@
     ));
     if (!rows.length) return null;
     const metrics = {};
-    (model.phaseMetrics?.[phase] || []).forEach((metric) => {
+    metricsForPhase(phase, position).forEach((metric) => {
       const values = rows
         .map((row) => row[metric])
         .filter((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)))
@@ -146,7 +179,7 @@
 
   function renderMatchComparisons() {
     const phase = $("caseComparisonPhase").value;
-    const metrics = model.phaseMetrics?.[phase] || [];
+    const metrics = metricsForPhase(phase, playerCase.meta?.primaryPosition);
     const matches = playerCase.matches || [];
     $("matchComparisonHead").innerHTML = `<tr><th>场次</th><th>英雄 / 位置</th><th>结果</th><th>补丁</th><th>同英雄固定基准</th>${metrics.map((metric) => `<th title="${escapeHtml(metric)}">${escapeHtml(shortMetric(metric))}</th>`).join("")}</tr>`;
     let eligible = 0;
@@ -363,6 +396,7 @@
 
   function render() {
     const phase = $("phaseFilter").value;
+    $("jungleMetricNote").hidden = $("positionFilter").value !== "JUNGLE";
     const resolved = resolve(model.profiles || {}, phase);
     renderResolution(resolved);
     renderDistributions(resolved?.value);
