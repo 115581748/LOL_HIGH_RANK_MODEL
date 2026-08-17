@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "16da9005eeb9dde7",
-  "generatedAtUtc": "2026-08-16T06:17:00.125058+00:00",
+  "revision": "309f04106d287873",
+  "generatedAtUtc": "2026-08-17T04:14:34.135308+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
