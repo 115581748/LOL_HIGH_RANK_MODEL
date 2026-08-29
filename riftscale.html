@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RiftScale | Match-by-match performance ranking</title>
+  <meta name="description" content="See how each part of your League of Legends match compares with high-rank OCE players on the same champion and role.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="RiftScale">
+  <meta property="og:title" content="RiftScale | Your rank is one number. Your gameplay isn't.">
+  <meta property="og:description" content="Match-by-match performance ranking against high-rank OCE players on the same champion and role.">
+  <meta property="og:url" content="https://115581748.github.io/LOL_HIGH_RANK_MODEL/riftscale.html">
+  <meta property="og:image" content="https://115581748.github.io/LOL_HIGH_RANK_MODEL/riftscale/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="RiftScale | Your rank is one number. Your gameplay isn't.">
+  <meta name="twitter:description" content="Match-by-match performance ranking for OCE League of Legends.">
+  <meta name="twitter:image" content="https://115581748.github.io/LOL_HIGH_RANK_MODEL/riftscale/og.png">
+  <style>
+    :root { color-scheme: dark; background: #061116; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #061116; }
+    iframe { display: block; width: 100%; height: 100%; border: 0; background: #061116; }
+    .loading {
+      position: fixed; inset: 0; z-index: 2; display: grid; place-items: center;
+      color: #63e2d6; background: radial-gradient(circle at 50% 40%, #102b30, #061116 62%);
+      font: 800 12px/1.4 ui-sans-serif, system-ui; letter-spacing: .18em; transition: opacity .25s ease;
+    }
+    .loading::before {
+      content: ""; width: 42px; height: 42px; margin: 0 auto 15px; display: block;
+      border: 1px solid rgba(99,226,214,.25); border-top-color: #63e2d6; transform: rotate(45deg);
+      animation: pulse 1.1s ease-in-out infinite alternate;
+    }
+    .loading.hidden { opacity: 0; pointer-events: none; }
+    .fallback {
+      position: fixed; right: 12px; bottom: 10px; z-index: 3; padding: 7px 10px;
+      color: #88a4a7; background: rgba(6,17,22,.88); font: 600 10px ui-sans-serif, system-ui;
+      text-decoration: none; border: 1px solid rgba(130,193,194,.18);
+    }
+    @keyframes pulse { to { border-color: #f3bd54; transform: rotate(135deg) scale(.86); } }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loading"><span>LOADING RIFTSCALE</span></div>
+  <iframe
+    src="https://riftscale-oce.zhangxingchi04.chatgpt.site/"
+    title="RiftScale OCE match performance ranking"
+    allow="clipboard-write"
+    referrerpolicy="strict-origin-when-cross-origin"
+    onload="document.getElementById('loading').classList.add('hidden')"
+  ></iframe>
+  <a class="fallback" href="https://riftscale-oce.zhangxingchi04.chatgpt.site/" target="_blank" rel="noopener">Open directly ↗</a>
+</body>
+</html>

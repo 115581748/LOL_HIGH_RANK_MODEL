@@ -20,3 +20,10 @@ assets/.player-case.*.next.js
 assets/.conditional-model.*.next.js
 assets/.model-manifest.*.next.json
 config/*.next
+
+# 站点脚手架的本地依赖，不进仓库
+.sites-bootstrap/
+# 生成的社交预览图；已发布副本是 riftscale/og.png，这里只是同一文件的中间产物
+artifacts/
+# riftscale-service 有自己独立的 .git，不由本仓库跟踪；若要纳入请显式改成 submodule
+/riftscale-service/
