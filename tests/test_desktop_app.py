@@ -1,4 +1,8 @@
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 
 from desktop.lol_high_rank_comparator import (
     approximate_percentile,
@@ -266,6 +270,45 @@ class DesktopAppTests(unittest.TestCase):
         blue_mid_spawn = next(wave for wave in spawn if wave["teamId"] == 100 and wave["lane"] == "MIDDLE")
         blue_mid_moved = next(wave for wave in moved if wave["teamId"] == 100 and wave["lane"] == "MIDDLE")
         self.assertGreater(blue_mid_moved["x"], blue_mid_spawn["x"])
+
+    def test_module_imports_without_tkinter(self):
+        # 自动化/CI 环境常常没有 tkinter；纯逻辑函数必须仍可导入和测试。
+        script = textwrap.dedent(
+            """
+            import importlib.abc
+            import sys
+
+            class _BlockTkinter(importlib.abc.MetaPathFinder):
+                def find_spec(self, name, path=None, target=None):
+                    if name == "tkinter" or name.startswith("tkinter."):
+                        raise ImportError("tkinter blocked for test")
+                    return None
+
+            for name in [m for m in sys.modules if m == "tkinter" or m.startswith("tkinter.")]:
+                del sys.modules[name]
+            sys.meta_path.insert(0, _BlockTkinter())
+
+            from desktop.lol_high_rank_comparator import (
+                TKINTER_IMPORT_ERROR,
+                blend_hex,
+                parse_riot_id,
+            )
+
+            assert TKINTER_IMPORT_ERROR is not None
+            assert parse_riot_id("Geolonwe#OC") == ("Geolonwe", "OC")
+            assert blend_hex("#000000", "#ffffff", 0.5) == "#808080"
+            print("headless-import-ok")
+            """
+        )
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("headless-import-ok", result.stdout)
 
 
 if __name__ == "__main__":

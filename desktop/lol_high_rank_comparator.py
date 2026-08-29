@@ -9,8 +9,42 @@ import time
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
-import tkinter as tk
-from tkinter import messagebox, ttk
+try:
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    TKINTER_IMPORT_ERROR: Exception | None = None
+except ImportError as exc:  # 没有 tkinter 的无界面环境（CI、自动化代理、精简发行版）
+    # 目的只有一个：让本模块的纯逻辑函数可以被导入和测试。
+    # 任何真正的界面调用仍会立即抛出明确错误，不做静默降级，
+    # 也不改变有 tkinter 时的任何行为。
+    TKINTER_IMPORT_ERROR = exc
+
+    class _MissingTkinterAttribute:
+        """占位类：可以作为基类出现，但一旦实例化就报错。"""
+
+        _missing_name = "tkinter"
+
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                f"{self._missing_name} 不可用：当前 Python 未安装 tkinter"
+                f"（{TKINTER_IMPORT_ERROR}）。桌面程序需要带 tkinter 的 Python 运行。"
+            )
+
+    class _MissingTkinterModule:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        def __getattr__(self, item: str):
+            return type(
+                f"_Missing_{item}",
+                (_MissingTkinterAttribute,),
+                {"_missing_name": f"{self._name}.{item}"},
+            )
+
+    tk = _MissingTkinterModule("tkinter")
+    ttk = _MissingTkinterModule("tkinter.ttk")
+    messagebox = _MissingTkinterModule("tkinter.messagebox")
 
 if not getattr(sys, "frozen", False):
     source_root = Path(__file__).resolve().parents[1]
