@@ -290,6 +290,7 @@ def extract_player_match(match: dict, timeline: dict, puuid: str, rank: dict, la
     late_damage_taken = max(0, send["damage_taken"] - s_late["damage_taken"])
     opponent_fields = {
         "opponent_champion_id": None, "opponent_champion": None, "opponent_position": None,
+        "opponent_vision_per_min": None, "opponent_end_visionScore": None,
     }
     for phase in ("early", "mid", "late"):
         for metric in (
@@ -339,6 +340,8 @@ def extract_player_match(match: dict, timeline: dict, puuid: str, rank: dict, la
             "opponent_champion_id": opponent.get("championId"),
             "opponent_champion": opponent.get("championName"),
             "opponent_position": opponent.get("teamPosition") or opponent.get("individualPosition"),
+            "opponent_vision_per_min": round(_n(opponent.get("visionScore")) / max(duration_min, 1), 4),
+            "opponent_end_visionScore": _n(opponent.get("visionScore")),
             "opponent_early_gold_15": opponent_s15["gold"] - opponent_s0["gold"],
             "opponent_early_xp_15": opponent_s15["xp"] - opponent_s0["xp"],
             "opponent_early_cs_15": opponent_s15["cs"] - opponent_s0["cs"],

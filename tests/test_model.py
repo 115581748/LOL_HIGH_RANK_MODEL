@@ -251,6 +251,12 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(any("state" in field.lower() or "golddiff" in field.lower() for field in exported))
         self.assertIn("early_gank_takedowns", phase_metrics("EARLY", "JUNGLE"))
         self.assertNotIn("early_gank_takedowns", phase_metrics("EARLY", "BOTTOM"))
+        self.assertEqual(
+            phase_metrics("EARLY", "UTILITY")[-2:],
+            ["vision_per_min", "end_visionScore"],
+        )
+        self.assertIn("vision_per_min", phase_metrics("MID", "UTILITY"))
+        self.assertNotIn("vision_per_min", phase_metrics("MID", "BOTTOM"))
 
     def test_checkpoint_rows_deduplicate_player_matches_using_latest_row(self):
         rows = [

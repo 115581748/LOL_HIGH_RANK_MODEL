@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import statistics
 import sys
 import threading
 import time
@@ -111,6 +112,50 @@ METRIC_NAMES = {
     "mid_team_rift_heralds": "中期团队峡谷先锋", "mid_personal_epic_secures": "中期个人史诗野怪击杀",
     "mid_gank_takedown_diff_vs_enemy_jungle": "中期有效 Gank 对位差",
     "mid_epic_monster_diff_vs_enemy_jungle": "中期史诗野怪对位差",
+    "vision_per_min": "全场视野分/分钟", "end_visionScore": "全场视野得分",
+}
+
+# A match rating is a presentation layer over the existing champion-position
+# distribution. It is not Riot rank, MMR, or a causal estimate of contribution.
+LOWER_IS_BETTER_METRICS = {
+    "early_deaths", "mid_deaths", "late_deaths", "late_first_target_deaths",
+    "early_first_gank_minute", "mid_first_gank_minute",
+}
+MAGNITUDE_ONLY_METRICS = {"late_damage_taken_per_min"}
+ABILITY_CATEGORY_ORDER = ("FARMING", "PRESSURE", "SURVIVAL", "DAMAGE", "TEAMFIGHT", "MACRO", "VISION")
+ABILITY_CATEGORY_LABELS = {
+    "FARMING": "发育",
+    "PRESSURE": "对线",
+    "SURVIVAL": "生存",
+    "DAMAGE": "输出",
+    "TEAMFIGHT": "战斗",
+    "MACRO": "地图资源",
+    "VISION": "视野",
+}
+METRIC_ABILITY_CATEGORIES = {
+    "early_cs_15": "FARMING",
+    "mid_gold_gain": "FARMING", "mid_cs_gain": "FARMING",
+    "early_gold_15": "PRESSURE", "early_xp_15": "PRESSURE",
+    "early_kills": "PRESSURE", "early_assists": "PRESSURE",
+    "early_gold_diff_vs_enemy_jungle": "PRESSURE", "early_xp_diff_vs_enemy_jungle": "PRESSURE",
+    "early_cs_diff_vs_enemy_jungle": "PRESSURE", "early_gank_takedowns": "PRESSURE",
+    "early_gank_lanes": "PRESSURE", "early_first_gank_minute": "PRESSURE",
+    "early_enemy_jungle_takedowns": "PRESSURE", "early_gank_takedown_diff_vs_enemy_jungle": "PRESSURE",
+    "mid_gank_takedowns": "PRESSURE", "mid_gank_lanes": "PRESSURE",
+    "mid_first_gank_minute": "PRESSURE", "mid_enemy_jungle_takedowns": "PRESSURE",
+    "mid_gank_takedown_diff_vs_enemy_jungle": "PRESSURE",
+    "early_deaths": "SURVIVAL", "mid_deaths": "SURVIVAL", "late_deaths": "SURVIVAL",
+    "late_first_target_deaths": "SURVIVAL",
+    "mid_champion_damage": "DAMAGE", "late_champion_damage_per_min": "DAMAGE",
+    "mid_kills": "TEAMFIGHT", "mid_assists": "TEAMFIGHT", "late_kills": "TEAMFIGHT",
+    "late_assists": "TEAMFIGHT", "late_teamfight_participation_rate": "TEAMFIGHT",
+    "early_kill_participation_rate": "TEAMFIGHT", "mid_kill_participation_rate": "TEAMFIGHT",
+    "mid_team_turrets": "MACRO", "mid_team_dragons": "MACRO", "early_team_dragons": "MACRO",
+    "early_team_void_grubs": "MACRO", "early_team_rift_heralds": "MACRO",
+    "early_personal_epic_secures": "MACRO", "early_epic_monster_diff_vs_enemy_jungle": "MACRO",
+    "mid_team_void_grubs": "MACRO", "mid_team_rift_heralds": "MACRO",
+    "mid_personal_epic_secures": "MACRO", "mid_epic_monster_diff_vs_enemy_jungle": "MACRO",
+    "vision_per_min": "VISION", "end_visionScore": "VISION",
 }
 
 
@@ -198,6 +243,93 @@ def approximate_percentile(value, stats) -> float | None:
     return None
 
 
+DEFAULT_PERFORMANCE_SCALE = (
+    {"minPercentile": 99, "label": "王者", "color": "#f4ca68"},
+    {"minPercentile": 97, "label": "宗师", "color": "#ef766f"},
+    {"minPercentile": 92, "label": "大师", "color": "#c894ff"},
+    {"minPercentile": 78, "label": "钻石 I", "color": "#77d8ee"},
+    {"minPercentile": 50, "label": "钻石 IV", "color": "#6fd9d0"},
+    {"minPercentile": 30, "label": "翡翠 II", "color": "#62c98b"},
+    {"minPercentile": 15, "label": "铂金 II", "color": "#83b8bd"},
+    {"minPercentile": 5, "label": "黄金 II", "color": "#d5a94c"},
+    {"minPercentile": 0, "label": "白银 I", "color": "#9aa7ad"},
+)
+
+
+def performance_tier(percentile, scale=None) -> dict | None:
+    try:
+        value = min(100.0, max(0.0, float(percentile)))
+    except (TypeError, ValueError):
+        return None
+    candidates = sorted(scale or DEFAULT_PERFORMANCE_SCALE, key=lambda item: float(item["minPercentile"]), reverse=True)
+    selected = next((item for item in candidates if value >= float(item["minPercentile"])), candidates[-1])
+    return {**selected, "percentile": value}
+
+
+def metric_performance_percentile(metric: str, value, stats: dict | None) -> float | None:
+    percentile = approximate_percentile(value, stats)
+    if percentile is None:
+        return None
+    if metric in LOWER_IS_BETTER_METRICS:
+        return 100.0 - percentile
+    return percentile
+
+
+def metric_rating_text(metric: str, value, stats: dict | None, scale=None) -> str:
+    percentile = metric_performance_percentile(metric, value, stats)
+    if percentile is None:
+        return "—"
+    if metric in MAGNITUDE_ONLY_METRICS:
+        return f"承伤量级 · P{round(percentile)}"
+    tier = performance_tier(percentile, scale)
+    return f"≈{tier['label']} · P{round(percentile)}"
+
+
+def ability_category_label(category: str, position: str | None = None, phase: str | None = None) -> str:
+    if category == "PRESSURE" and str(position or "").upper() == "JUNGLE":
+        return "野区节奏"
+    if category == "TEAMFIGHT" and phase == "LATE":
+        return "团战"
+    return ABILITY_CATEGORY_LABELS.get(category, category)
+
+
+def match_performance_profile(match: dict, phase: str, baselines: dict, scale=None) -> list[dict]:
+    position = match.get("position")
+    baseline = baselines.get(f"{match.get('champion')}|{position}|{phase}", {})
+    grouped = {category: [] for category in ABILITY_CATEGORY_ORDER}
+    for metric in phase_metrics(phase, position):
+        if metric in MAGNITUDE_ONLY_METRICS:
+            continue
+        category = METRIC_ABILITY_CATEGORIES.get(metric)
+        stats = baseline.get("metrics", {}).get(metric)
+        value = number(match.get(metric))
+        percentile = metric_performance_percentile(metric, value, stats)
+        if not category or percentile is None:
+            continue
+        grouped[category].append({
+            "metric": metric,
+            "percentile": percentile,
+            "sampleSize": int(number((stats or {}).get("n")) or baseline.get("sampleSize", 0) or 0),
+        })
+    output = []
+    for category in ABILITY_CATEGORY_ORDER:
+        evidence = grouped[category]
+        if not evidence:
+            continue
+        percentile = float(statistics.median(item["percentile"] for item in evidence))
+        tier = performance_tier(percentile, scale)
+        output.append({
+            "category": category,
+            "label": ability_category_label(category, position, phase),
+            "percentile": percentile,
+            "tier": tier["label"],
+            "color": tier.get("color", PALETTE["teal"]),
+            "sampleSize": min(item["sampleSize"] for item in evidence),
+            "metrics": [item["metric"] for item in evidence],
+        })
+    return output
+
+
 def format_metric(metric: str, value) -> str:
     try:
         numeric = float(value)
@@ -225,7 +357,7 @@ def format_gap(metric: str, value) -> str:
     return f"{sign}{format_metric(metric, numeric)}"
 
 
-def comparison_rows(match: dict, phase: str, baselines: dict) -> list[tuple[str, ...]]:
+def comparison_rows(match: dict, phase: str, baselines: dict, scale=None) -> list[tuple[str, ...]]:
     position = match.get("position")
     player_profile = baselines.get(f"{match.get('champion')}|{position}|{phase}", {})
     opponent_profile = baselines.get(f"{match.get('opponentChampion')}|{match.get('opponentPosition')}|{phase}", {})
@@ -237,8 +369,6 @@ def comparison_rows(match: dict, phase: str, baselines: dict) -> list[tuple[str,
         opponent_stats = opponent_profile.get("metrics", {}).get(metric)
         player_base = number(player_stats.get("median")) if player_stats else None
         opponent_base = number(opponent_stats.get("median")) if opponent_stats else None
-        player_pct = approximate_percentile(player_value, player_stats)
-        opponent_pct = approximate_percentile(opponent_value, opponent_stats)
         rows.append((
             METRIC_NAMES.get(metric, metric),
             format_metric(metric, player_value),
@@ -248,8 +378,8 @@ def comparison_rows(match: dict, phase: str, baselines: dict) -> list[tuple[str,
             format_gap(metric, player_value - opponent_value) if player_value is not None and opponent_value is not None else "—",
             format_gap(metric, player_value - player_base) if player_value is not None and player_base is not None else "—",
             format_gap(metric, opponent_value - opponent_base) if opponent_value is not None and opponent_base is not None else "—",
-            f"P{round(player_pct)}" if player_pct is not None else "—",
-            f"P{round(opponent_pct)}" if opponent_pct is not None else "—",
+            metric_rating_text(metric, player_value, player_stats, scale),
+            metric_rating_text(metric, opponent_value, opponent_stats, scale),
         ))
     return rows
 
@@ -1112,6 +1242,9 @@ class ComparatorApp(tk.Tk):
         self.key_path = self.data_dir / "riot_api_key.txt"
         self.case_path = self.data_dir / "player_case.json"
         self.settings = load_settings(resource_path("config/model-parameters.json"))
+        rating_settings = self.settings.get("performance_rating", {})
+        self.performance_scale = rating_settings.get("scale") or list(DEFAULT_PERFORMANCE_SCALE)
+        self.performance_minimum_samples = int(rating_settings.get("minimum_metric_samples", 20))
         self.baseline_payload = json.loads(resource_path("desktop/all-champion-baselines.json").read_text(encoding="utf-8"))
         self.baselines = self.baseline_payload.get("profiles", {})
         item_payload = json.loads(resource_path("assets/item-data.json").read_text(encoding="utf-8"))
@@ -1139,6 +1272,8 @@ class ComparatorApp(tk.Tk):
         self.header_control_window = None
         self.form_canvas = None
         self.form_hitboxes = []
+        self.performance_canvas = None
+        self.performance_hitboxes = []
         self.status_canvas = None
         self.animation_phase = 0.0
         self.animation_started = time.monotonic()
@@ -1281,7 +1416,7 @@ class ComparatorApp(tk.Tk):
 
         self.explanation = ttk.Label(
             right,
-            text="正负号只表示数值方向，不自动判断好坏。双方基准分别按各自英雄＋位置匹配。",
+            text="≈表现段位来自同英雄＋同位置 D4+ 分位映射，不是实际 Rank 或 MMR；团队指标只是情境，承伤只显示量级。",
             style="Muted.TLabel",
             background="#0c1319",
         )
@@ -1294,16 +1429,24 @@ class ComparatorApp(tk.Tk):
         self.notebook.add(compare_tab, text="数据对比")
         self.notebook.add(replay_tab, text="整场小地图")
 
+        self.performance_canvas = tk.Canvas(
+            compare_tab, height=216, bg="#081015", highlightthickness=1,
+            highlightbackground="#20343d", bd=0, cursor="hand2",
+        )
+        self.performance_canvas.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        self.performance_canvas.bind("<Configure>", lambda _event: self._render_performance_panel())
+        self.performance_canvas.bind("<Button-1>", self._performance_card_click)
+
         columns = ("metric", "player", "opponent", "player_base", "opponent_base", "head_gap", "player_gap", "opponent_gap", "player_pct", "opponent_pct")
         self.comparison_tree = ttk.Treeview(compare_tab, columns=columns, show="headings")
         headings = {
             "metric": "指标", "player": "你本局", "opponent": "对手本局", "player_base": "你英雄基准",
             "opponent_base": "对手英雄基准", "head_gap": "你−对手", "player_gap": "你−基准",
-            "opponent_gap": "对手−基准", "player_pct": "你分位", "opponent_pct": "对手分位",
+            "opponent_gap": "对手−基准", "player_pct": "你的表现段位", "opponent_pct": "对手表现段位",
         }
         headings["player_base"] = "你英雄基准（n=局数）"
         headings["opponent_base"] = "对手英雄基准（n=局数）"
-        widths = {"metric": 190, "player": 82, "opponent": 82, "player_base": 125, "opponent_base": 125, "head_gap": 90, "player_gap": 90, "opponent_gap": 100, "player_pct": 65, "opponent_pct": 70}
+        widths = {"metric": 180, "player": 78, "opponent": 78, "player_base": 118, "opponent_base": 118, "head_gap": 84, "player_gap": 84, "opponent_gap": 92, "player_pct": 128, "opponent_pct": 128}
         for column in columns:
             self.comparison_tree.heading(column, text=headings[column])
             self.comparison_tree.column(column, width=widths[column], anchor="w" if column == "metric" else "center", stretch=column in {"metric", "player_base", "opponent_base"})
@@ -1313,10 +1456,10 @@ class ComparatorApp(tk.Tk):
         right_hscroll = ttk.Scrollbar(compare_tab, orient="horizontal", command=self.comparison_tree.xview)
         self.comparison_tree.configure(yscrollcommand=right_vscroll.set, xscrollcommand=right_hscroll.set)
         compare_tab.columnconfigure(0, weight=1)
-        compare_tab.rowconfigure(0, weight=1)
-        self.comparison_tree.grid(row=0, column=0, sticky="nsew")
-        right_vscroll.grid(row=0, column=1, sticky="ns")
-        right_hscroll.grid(row=1, column=0, sticky="ew")
+        compare_tab.rowconfigure(1, weight=1)
+        self.comparison_tree.grid(row=1, column=0, sticky="nsew")
+        right_vscroll.grid(row=1, column=1, sticky="ns")
+        right_hscroll.grid(row=2, column=0, sticky="ew")
 
         timeline = ttk.Frame(replay_tab, style="Panel.TFrame", padding=(10, 7, 10, 5))
         timeline.pack(fill="x")
@@ -2438,10 +2581,126 @@ class ComparatorApp(tk.Tk):
         if hasattr(self, "replay_button"):
             self.replay_button.configure(text="播放")
 
+    def _render_performance_panel(self) -> None:
+        canvas = self.performance_canvas
+        if not canvas or not hasattr(self, "match_tree"):
+            return
+        width = max(760, canvas.winfo_width())
+        canvas.delete("all")
+        self.performance_hitboxes = []
+        match = self._selected_match()
+        phase = self.selected_phase.get()
+        if not match:
+            canvas.create_text(
+                width / 2, 108, text="选择一场比赛后生成单局能力段位",
+                fill=PALETTE["muted"], font=("Microsoft YaHei UI", 11),
+            )
+            return
+
+        ratings = match_performance_profile(match, phase, self.baselines, self.performance_scale)
+        left_width = min(292, max(244, width * 0.265))
+        self._rounded_rectangle(
+            canvas, 9, 9, left_width, 207, 16,
+            fill="#0c171d", outline="#39515a", width=1,
+        )
+        canvas.create_rectangle(10, 34, 14, 181, fill=PALETTE["gold"], outline="")
+        canvas.create_text(
+            28, 28, text=f"{PHASE_NAMES.get(phase, phase)} · 本局能力段位",
+            fill="#91a7af", font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
+        )
+        champion = match.get("champion") or "—"
+        icon = self._champion_icon(champion, 36)
+        if icon:
+            canvas.create_image(47, 70, image=icon)
+        canvas.create_text(
+            72 if icon else 28, 62, text=champion,
+            fill=PALETTE["gold_soft"], font=("Microsoft YaHei UI", 16, "bold"), anchor="w",
+        )
+        canvas.create_text(
+            72 if icon else 28, 82, text=POSITION_NAMES.get(match.get("position"), match.get("position") or "—"),
+            fill=PALETTE["teal"], font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
+        )
+        if not ratings:
+            message = "该阶段没有足够的同英雄同位置数据"
+            if phase == "LATE" and (number(match.get("durationMin")) or 0) < 25:
+                message = "该局未进入 25+ 分钟阶段"
+            canvas.create_text(
+                28, 122, text=message, width=max(180, left_width - 45),
+                fill="#98abb2", font=("Microsoft YaHei UI", 10), anchor="nw",
+            )
+            return
+
+        strongest = max(ratings, key=lambda item: item["percentile"])
+        weakest = min(ratings, key=lambda item: item["percentile"])
+        canvas.create_text(28, 111, text="本局最强", fill="#708891", font=("Microsoft YaHei UI", 8, "bold"), anchor="w")
+        canvas.create_text(
+            28, 136, text=f"{strongest['label']}  {strongest['tier']}",
+            fill=strongest["color"], font=("Microsoft YaHei UI", 13, "bold"), anchor="w",
+        )
+        canvas.create_text(28, 162, text="优先复盘", fill="#708891", font=("Microsoft YaHei UI", 8, "bold"), anchor="w")
+        canvas.create_text(
+            28, 187, text=f"{weakest['label']}  {weakest['tier']}",
+            fill=weakest["color"], font=("Microsoft YaHei UI", 13, "bold"), anchor="w",
+        )
+
+        right_x = left_width + 11
+        available = max(420, width - right_x - 9)
+        columns = 3
+        gap = 8
+        card_width = (available - gap * (columns - 1)) / columns
+        for index, rating in enumerate(ratings[:6]):
+            row, column = divmod(index, columns)
+            x1 = right_x + column * (card_width + gap)
+            y1 = 9 + row * 99
+            x2, y2 = x1 + card_width, y1 + 91
+            low_sample = rating["sampleSize"] < self.performance_minimum_samples
+            border = "#775f37" if low_sample else blend_hex("#28414a", rating["color"], 0.42)
+            self._rounded_rectangle(canvas, x1, y1, x2, y2, 13, fill="#0b151b", outline=border, width=1)
+            canvas.create_rectangle(x1 + 1, y1 + 15, x1 + 4, y2 - 15, fill=rating["color"], outline="")
+            canvas.create_text(
+                x1 + 15, y1 + 18, text=rating["label"], fill="#91a7af",
+                font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
+            )
+            canvas.create_text(
+                x2 - 12, y1 + 18, text=f"P{round(rating['percentile'])}", fill=rating["color"],
+                font=("Consolas", 9, "bold"), anchor="e",
+            )
+            canvas.create_text(
+                x1 + 15, y1 + 48, text=rating["tier"], fill=rating["color"],
+                font=("Microsoft YaHei UI", 15, "bold"), anchor="w",
+            )
+            sample_text = f"{len(rating['metrics'])} 项指标 · n≥{rating['sampleSize']}"
+            if low_sample:
+                sample_text += " · 探索性"
+            canvas.create_text(
+                x1 + 15, y1 + 68, text=sample_text, fill="#667d86",
+                font=("Microsoft YaHei UI", 7), anchor="w",
+            )
+            bar_left, bar_right = x1 + 15, x2 - 12
+            canvas.create_rectangle(bar_left, y2 - 10, bar_right, y2 - 6, fill="#17272e", outline="")
+            canvas.create_rectangle(
+                bar_left, y2 - 10,
+                bar_left + (bar_right - bar_left) * rating["percentile"] / 100,
+                y2 - 6, fill=rating["color"], outline="",
+            )
+            self.performance_hitboxes.append((x1, y1, x2, y2, rating["metrics"]))
+
+    def _performance_card_click(self, event) -> None:
+        for x1, y1, x2, y2, metrics in self.performance_hitboxes:
+            if not (x1 <= event.x <= x2 and y1 <= event.y <= y2):
+                continue
+            for metric in metrics:
+                if self.comparison_tree.exists(metric):
+                    self.comparison_tree.selection_set(metric)
+                    self.comparison_tree.focus(metric)
+                    self.comparison_tree.see(metric)
+                    return
+
     def _render_comparison(self) -> None:
         for item in self.comparison_tree.get_children():
             self.comparison_tree.delete(item)
         match = self._selected_match()
+        self._render_performance_panel()
         if not match:
             return
         phase = self.selected_phase.get()
@@ -2451,8 +2710,9 @@ class ComparatorApp(tk.Tk):
         if phase == "LATE" and (number(match.get("durationMin")) or 0) < 25:
             self.comparison_tree.insert("", "end", values=("该局未达到 25 分钟", "—", "—", "—", "—", "—", "—", "—", "—", "—"), tags=("phase_note",))
             return
-        for index, row in enumerate(comparison_rows(match, phase, self.baselines)):
-            self.comparison_tree.insert("", "end", values=row, tags=("stripe",) if index % 2 else ())
+        metrics = phase_metrics(phase, match.get("position"))
+        for index, (metric, row) in enumerate(zip(metrics, comparison_rows(match, phase, self.baselines, self.performance_scale))):
+            self.comparison_tree.insert("", "end", iid=metric, values=row, tags=("stripe",) if index % 2 else ())
 
     def _saved_key(self) -> str:
         return self.key_path.read_text(encoding="ascii").strip() if self.key_path.exists() else ""

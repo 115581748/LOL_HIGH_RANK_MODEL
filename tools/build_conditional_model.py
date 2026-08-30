@@ -44,6 +44,14 @@ POSITION_PHASE_METRICS = {
             "mid_gank_takedown_diff_vs_enemy_jungle", "mid_epic_monster_diff_vs_enemy_jungle",
         ],
     },
+    "UTILITY": {
+        # Riot exposes the official end-of-game vision score, not a historical
+        # vision-score value at 15/25 minutes. Keep both duration-aware and raw
+        # full-match statistics explicit even when the UI is viewing a phase.
+        "EARLY": ["vision_per_min", "end_visionScore"],
+        "MID": ["vision_per_min", "end_visionScore"],
+        "LATE": ["vision_per_min", "end_visionScore"],
+    },
 }
 
 

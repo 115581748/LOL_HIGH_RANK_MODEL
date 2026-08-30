@@ -15,12 +15,16 @@ from desktop.lol_high_rank_comparator import (
     format_clock,
     focus_participant_ids,
     map_coordinates,
+    match_performance_profile,
+    metric_performance_percentile,
+    metric_rating_text,
     nearest_objective_loss,
     objective_loss_analysis,
     objective_loss_events,
     objective_event_position,
     objective_snapshot,
     parse_riot_id,
+    performance_tier,
     recent_form_summary,
     replay_phase,
     replay_situation_snapshot,
@@ -67,6 +71,66 @@ class DesktopAppTests(unittest.TestCase):
         self.assertEqual(row[5], "+15")
         self.assertEqual(row[6], "+5")
         self.assertEqual(row[7], "-5")
+        self.assertEqual(row[8], "≈钻石 IV · P62")
+
+    def test_metric_performance_tiers_respect_direction_and_context(self):
+        stats = {"p10": 1, "p25": 2, "median": 3, "p75": 4, "p90": 5, "n": 100}
+        self.assertEqual(metric_performance_percentile("early_deaths", 1, stats), 90)
+        self.assertEqual(metric_rating_text("early_deaths", 1, stats), "≈钻石 I · P90")
+        self.assertEqual(metric_rating_text("late_damage_taken_per_min", 4, stats), "承伤量级 · P75")
+        self.assertEqual(performance_tier(99)["label"], "王者")
+        self.assertEqual(performance_tier(50)["label"], "钻石 IV")
+
+    def test_match_performance_profile_uses_robust_category_medians(self):
+        stats = {"p10": 10, "p25": 20, "median": 30, "p75": 40, "p90": 50, "n": 100}
+        death_stats = {"p10": 1, "p25": 2, "median": 3, "p75": 4, "p90": 5, "n": 90}
+        baselines = {
+            "Ashe|BOTTOM|EARLY": {
+                "sampleSize": 100,
+                "metrics": {
+                    "early_gold_15": stats,
+                    "early_xp_15": stats,
+                    "early_cs_15": stats,
+                    "early_kills": stats,
+                    "early_deaths": death_stats,
+                    "early_assists": stats,
+                },
+            },
+        }
+        match = {
+            "champion": "Ashe", "position": "BOTTOM",
+            "early_gold_15": 30, "early_xp_15": 30, "early_cs_15": 40,
+            "early_kills": 30, "early_deaths": 1, "early_assists": 30,
+        }
+        profile = {item["category"]: item for item in match_performance_profile(match, "EARLY", baselines)}
+        self.assertEqual(profile["FARMING"]["percentile"], 75)
+        self.assertEqual(profile["FARMING"]["tier"], "钻石 IV")
+        self.assertEqual(profile["SURVIVAL"]["percentile"], 90)
+        self.assertEqual(profile["SURVIVAL"]["tier"], "钻石 I")
+        self.assertEqual(profile["PRESSURE"]["sampleSize"], 100)
+
+    def test_support_profile_adds_official_full_match_vision_category(self):
+        stats = {"p10": 0.5, "p25": 0.8, "median": 1.0, "p75": 1.3, "p90": 1.6, "n": 240}
+        score_stats = {"p10": 20, "p25": 30, "median": 40, "p75": 52, "p90": 65, "n": 240}
+        baselines = {
+            "Thresh|UTILITY|EARLY": {
+                "sampleSize": 240,
+                "metrics": {
+                    "vision_per_min": stats,
+                    "end_visionScore": score_stats,
+                },
+            },
+        }
+        match = {
+            "champion": "Thresh", "position": "UTILITY",
+            "vision_per_min": 1.3, "end_visionScore": 52,
+        }
+        profile = match_performance_profile(match, "EARLY", baselines)
+        self.assertEqual(len(profile), 1)
+        self.assertEqual(profile[0]["category"], "VISION")
+        self.assertEqual(profile[0]["label"], "视野")
+        self.assertEqual(profile[0]["percentile"], 75)
+        self.assertEqual(profile[0]["sampleSize"], 240)
 
     def test_map_coordinates_flip_vertical_axis(self):
         self.assertEqual(map_coordinates(0, 0, 600, 600), (0.0, 600.0))

@@ -38,6 +38,21 @@ DEFAULT_SETTINGS = {
         "winsor_upper_quantile": 0.99,
         "stability_iqr_tolerance": 0.25,
     },
+    "performance_rating": {
+        "method": "champion_position_d4_plus_percentile_mapping",
+        "minimum_metric_samples": 20,
+        "scale": [
+            {"minPercentile": 99, "label": "王者", "color": "#f4ca68"},
+            {"minPercentile": 97, "label": "宗师", "color": "#ef766f"},
+            {"minPercentile": 92, "label": "大师", "color": "#c894ff"},
+            {"minPercentile": 78, "label": "钻石 I", "color": "#77d8ee"},
+            {"minPercentile": 50, "label": "钻石 IV", "color": "#6fd9d0"},
+            {"minPercentile": 30, "label": "翡翠 II", "color": "#62c98b"},
+            {"minPercentile": 15, "label": "铂金 II", "color": "#83b8bd"},
+            {"minPercentile": 5, "label": "黄金 II", "color": "#d5a94c"},
+            {"minPercentile": 0, "label": "白银 I", "color": "#9aa7ad"},
+        ],
+    },
     "player_case": {
         "enabled": True,
         "riot_id": "Geolonwe",
