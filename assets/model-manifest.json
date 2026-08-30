@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": "ea3302f5ccead587",
-  "generatedAtUtc": "2026-08-24T10:39:49.775041+00:00",
+  "revision": "119f44ef1a0e53b7",
+  "generatedAtUtc": "2026-08-30T15:57:44.122213+00:00",
   "assets": {
     "core": "assets/model-data.js",
     "extras": "assets/model-extras.js",
@@ -10,10 +10,10 @@
   },
   "dataset": {
     "platform": "oc1",
-    "players_sampled": 5868,
-    "unique_matches": 15490,
-    "player_match_rows": 122782,
-    "generated_at_utc": "2026-08-20T02:36:46.186089+00:00",
+    "players_sampled": 5898,
+    "unique_matches": 15739,
+    "player_match_rows": 125183,
+    "generated_at_utc": "2026-08-25T12:26:56.103521+00:00",
     "unit_of_analysis": "one player in one ranked solo match",
     "outlier_rule": "per champion-position-metric Tukey 1.5*IQR",
     "model_parameters": {
@@ -67,18 +67,6 @@
       "EARLY": "0-15 minutes",
       "MID": "15-25 minutes",
       "LATE": "25+ minutes"
-    },
-    "late_efficiency_definition": {
-      "start_minute": 25,
-      "denominator": "actual game duration in minutes minus late-phase start minute",
-      "raw_totals_retained": [
-        "late_champion_damage",
-        "late_damage_taken"
-      ],
-      "primary_metrics": [
-        "late_champion_damage_per_min",
-        "late_damage_taken_per_min"
-      ]
     }
   },
   "parameters": {
@@ -114,10 +102,61 @@
       "winsor_upper_quantile": 0.99,
       "stability_iqr_tolerance": 0.25
     },
+    "performance_rating": {
+      "method": "champion_position_d4_plus_percentile_mapping",
+      "minimum_metric_samples": 20,
+      "scale": [
+        {
+          "minPercentile": 99,
+          "label": "王者",
+          "color": "#f4ca68"
+        },
+        {
+          "minPercentile": 97,
+          "label": "宗师",
+          "color": "#ef766f"
+        },
+        {
+          "minPercentile": 92,
+          "label": "大师",
+          "color": "#c894ff"
+        },
+        {
+          "minPercentile": 78,
+          "label": "钻石 I",
+          "color": "#77d8ee"
+        },
+        {
+          "minPercentile": 50,
+          "label": "钻石 IV",
+          "color": "#6fd9d0"
+        },
+        {
+          "minPercentile": 30,
+          "label": "翡翠 II",
+          "color": "#62c98b"
+        },
+        {
+          "minPercentile": 15,
+          "label": "铂金 II",
+          "color": "#83b8bd"
+        },
+        {
+          "minPercentile": 5,
+          "label": "黄金 II",
+          "color": "#d5a94c"
+        },
+        {
+          "minPercentile": 0,
+          "label": "白银 I",
+          "color": "#9aa7ad"
+        }
+      ]
+    },
     "player_case": {
       "enabled": true,
-      "riot_id": "FL4SHB4CK",
-      "tag_line": "XDD",
+      "riot_id": "Geolonwe",
+      "tag_line": "OC",
       "matches": 20,
       "auto_refresh_minutes": 1
     },
