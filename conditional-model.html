@@ -14,7 +14,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="index.html"><span>OCE / D4+</span> CONDITIONAL MODEL</a>
-    <div class="load-state"><i></i><span id="modelLoadState">正在读取条件模型</span></div>
+    <div class="topbar-actions"><a class="exe-download" href="release/LOLHighRankComparator.exe" download>下载 Windows EXE</a><div class="load-state"><i></i><span id="modelLoadState">正在读取条件模型</span></div></div>
   </header>
 
   <main>
@@ -22,7 +22,7 @@
       <div>
         <p class="eyebrow">HIGH-RANK REFERENCE WORKBENCH</p>
         <h1>不是一个混合平均值，<br>而是<em>同英雄参考模型</em>。</h1>
-        <p class="hero-copy">按英雄、位置、版本、段位和阶段查看 D4+ 玩家行为分布。逐局案例统一使用“同英雄＋同位置”的跨版本固定基准，不再按当局经济领先或落后切换比较标准。</p>
+        <p class="hero-copy">按英雄、位置、版本、段位和阶段查看 D4+ 玩家行为分布。逐局案例同时显示你和同位置对手的本局值，并分别匹配双方英雄自己的跨版本高分基准。</p>
       </div>
       <div class="hero-stats">
         <article><span>玩家单局记录</span><strong id="sourceRows">—</strong></article>
@@ -70,22 +70,31 @@
     </section>
 
     <section class="section-block case-section">
-      <div class="section-head"><div><p class="eyebrow">LOCAL PLAYER CASE</p><h2><a class="player-link" id="casePlayerLink" href="https://op.gg/lol/summoners/oce/Geolonwe-OC" target="_blank" rel="noreferrer">Geolonwe#OC ↗</a></h2></div><span id="caseStatus">—</span></div>
+      <div class="section-head"><div><p class="eyebrow">LOCAL PLAYER CASE</p><h2><a class="player-link" id="casePlayerLink" href="https://op.gg/lol/summoners/oce/FL4SHB4CK-XDD" target="_blank" rel="noreferrer">FL4SHB4CK#XDD ↗</a></h2></div><span id="caseStatus">—</span></div>
       <div class="player-control">
         <form id="playerSwitchForm">
-          <label for="playerRiotId"><span>切换玩家</span><input id="playerRiotId" name="riotId" type="text" maxlength="81" placeholder="玩家名#TAG 或 OP.GG 链接" autocomplete="off"></label>
+          <label for="playerRiotId"><span>查询玩家</span><input id="playerRiotId" name="riotId" type="text" maxlength="81" placeholder="任意玩家名#TAG 或 OP.GG 链接" autocomplete="off"></label>
+          <label for="playerApiKey"><span>Riot API Key（仅本机保存）</span><input id="playerApiKey" name="apiKey" type="password" maxlength="160" placeholder="RGAPI-…" autocomplete="off" spellcheck="false"></label>
+          <button id="apiKeySaveButton" class="secondary" type="button" disabled>保存 Key</button>
           <button id="playerSwitchButton" type="submit" disabled>切换并更新</button>
           <button id="playerRefreshButton" class="secondary" type="button" disabled>刷新当前玩家</button>
         </form>
         <div class="player-service-state" id="playerServiceState" data-state="checking" aria-live="polite"><i></i><span>正在检查安全更新服务…</span></div>
       </div>
+      <section class="review-panel" aria-labelledby="reviewTitle">
+        <div class="review-heading"><div><p class="eyebrow">PRIORITY REVIEW / 优先复盘</p><h2 id="reviewTitle">哪些差距真的反复出现？</h2></div><span id="reviewFreshness">—</span></div>
+        <p id="reviewHeadline" class="review-headline">正在检查逐局证据…</p>
+        <div id="reviewFindings" class="review-findings"></div>
+        <p id="reviewBoundary" class="review-boundary"></p>
+      </section>
       <div class="case-grid">
         <article class="panel prior-panel">
           <div class="panel-head"><div><span>COMPARISON RULE</span><h3>只呈现可复算的数据差距</h3></div></div>
           <div class="prior-list">
             <div><span>玩家统计量</span><b>逐场指标中位数</b></div>
             <div><span>比较基线</span><b>D4+ 条件中位数</b></div>
-            <div><span>差值定义</span><b>玩家 − 高分基线</b></div>
+            <div><span>对位差定义</span><b>玩家本局 − 对手本局</b></div>
+            <div><span>基准差定义</span><b>各方本局 − 各自英雄基准</b></div>
           </div>
           <p>正负号仅表示数值方向。例如死亡数为负差值只代表更少死亡；页面不自动把它解释成更好或更差。</p>
         </article>
@@ -96,26 +105,43 @@
         </article>
       </div>
       <div class="table-wrap recent-wrap">
-        <table class="metric-table recent-table"><thead><tr><th>场次</th><th>英雄</th><th>位置</th><th>胜负</th><th>15 分钟 CS</th><th>中期 CS</th><th>中期伤害</th><th>后期首个阵亡</th></tr></thead><tbody id="recentMatches"></tbody></table>
+        <table class="metric-table recent-table"><thead><tr><th>场次</th><th>你 / 对位英雄</th><th>位置</th><th>胜负</th><th>15 分钟 CS</th><th>中期 CS</th><th>中期伤害</th><th>后期首个阵亡</th></tr></thead><tbody id="recentMatches"></tbody></table>
       </div>
 
       <div class="match-comparison">
         <div class="section-head comparison-head">
-          <div><p class="eyebrow">MATCH-BY-MATCH GAPS</p><h2>逐局同英雄基准差距</h2></div>
+          <div><p class="eyebrow">MATCH-BY-MATCH GAPS</p><h2>逐局双方数据与英雄基准</h2></div>
           <label><span>比较阶段</span><select id="caseComparisonPhase"></select></label>
         </div>
-        <p class="section-copy">每个单元格依次显示该局值、同英雄 D4+ 基准中位数，以及“该局 − 基准”的绝对差、相对差和经验分位。每一局都固定匹配“同英雄＋同位置”的跨版本基准，不使用版本或经济局势切换基准，也绝不回退到其他英雄。逐局比较先按“玩家—比赛”去重，允许低于主模型门槛的小样本，并始终明示基准 n。</p>
+        <p class="section-copy">每个单元格显示：你的本局值、对手本局值、双方各自英雄的 D4+ 基准中位数、你减对手的对位差，以及双方各自相对基准的差值与经验分位。基准只匹配“该方英雄＋该方位置”，不使用当局经济局势，也不回退到其他英雄；25 分钟后的伤害与承伤按实际 25+ 时长折算为每分钟，25 分钟前的口径保持不变。</p>
         <div class="comparison-summary" id="matchComparisonSummary">—</div>
         <div class="table-wrap comparison-wrap">
           <table class="metric-table match-comparison-table"><thead id="matchComparisonHead"></thead><tbody id="matchComparisonRows"></tbody></table>
         </div>
       </div>
+
+      <section class="web-replay" aria-labelledby="webReplayTitle">
+        <div class="section-head replay-head"><div><p class="eyebrow">FULL MATCH REVIEW</p><h2 id="webReplayTitle">网页版整场小地图与 TAB 面板</h2></div><label><span>选择比赛</span><select id="replayMatchSelect"></select></label></div>
+        <p class="section-copy">人物坐标来自赛后 Timeline 约每 60 秒一次的采样；击杀、购买、视野、塔和史诗野怪使用事件时间戳。阵亡地点是事实，复活时间只作估计且不进入评分。</p>
+        <div class="replay-layout">
+          <article class="panel replay-map-panel">
+            <div class="replay-clock"><b id="replayClock">00:00</b><span id="replaySample">位置采样 —</span></div>
+            <div class="rift-map"><img src="assets/map11.png" alt="召唤峡谷地图"><div id="replayMarkers" class="replay-markers"></div><div id="replayEventMarkers" class="replay-event-markers"></div></div>
+            <input id="replayTimeline" type="range" min="0" max="1" value="0" step="1" aria-label="比赛时间线">
+            <div class="replay-controls"><button id="replayStart" type="button">|◀</button><button id="replayBack" type="button">−10s</button><button id="replayPlay" type="button">播放</button><button id="replayForward" type="button">+10s</button><button id="replayEnd" type="button">▶|</button></div>
+            <div id="replayEventFeed" class="replay-event-feed">选择比赛后显示事件。</div>
+          </article>
+          <article class="panel replay-analysis-panel"><p class="eyebrow">EVENTS & CANDIDATE REASONS</p><h3>团战、资源与证据</h3><div id="replayInsights" class="replay-insights"></div></article>
+        </div>
+        <div class="replay-tab-board"><section><h3>蓝方</h3><div id="replayBlueTeam"></div></section><section><h3>红方</h3><div id="replayRedTeam"></div></section></div>
+        <p class="review-boundary">团战为规则派生事件：至少 3 次英雄击杀，且相邻击杀间隔不超过 15 秒。候选原因保留原始证据；时间先后不等于因果。</p>
+      </section>
     </section>
 
-    <aside class="boundary-note"><b>解释边界</b><p>同一场比赛可能贡献多名 D4+ 玩家记录，因此玩家单局并非完全独立；分布和相关矩阵是描述模型，不自动等于因果或正确决策。聚合查询在精确英雄样本不足时会显示回退路径；逐局案例只接受同英雄、同位置的跨版本基准，找不到就明确显示无基准。</p></aside>
+    <aside class="boundary-note"><b>解释边界</b><p>同一场比赛可能贡献多名 D4+ 玩家记录，因此玩家单局并非完全独立；分布和相关矩阵是描述模型，不自动等于因果或正确决策。逐局对手按 Riot 标记的同位置匹配；异常位置或重开局可能没有对手。双方基准都只接受同英雄、同位置的跨版本样本，找不到就明确显示无基准。</p></aside>
   </main>
 
-  <footer><span>非 Riot Games 官方项目</span><a href="index.html">返回完整指标仪表盘 →</a></footer>
+  <footer><span>非 Riot Games 官方项目</span><a href="model-dashboard.html">返回全指标基准仪表盘 →</a></footer>
   <script src="assets/conditional-model-loader.js" data-app="conditional-model-app.js"></script>
 </body>
 </html>
