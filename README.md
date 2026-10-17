@@ -1,5 +1,11 @@
 # 峡谷天平
 
+## 公开案例研究
+
+`portfolio/index.html` 是无需登录或 Riot API Key 的只读作品集入口：一局匿名冻结比赛、可点击的目标事件证据、小地图时间轴、同英雄同位置基准、60 秒数据动画，以及架构、方法和局限。通过 `python -m http.server 8765` 启动后访问 `http://127.0.0.1:8765/portfolio/`。
+
+运行 `python -m tools.build_portfolio_demo` 可从现有案例与回放重新生成脱敏 Demo；运行 `python -m tools.build_portfolio_pdf` 可生成 `output/pdf/RiftScale_Case_Study.pdf`。导出使用字段白名单，不包含 Riot ID、PUUID、API Key 或比赛标识。网站与桌面的“优先复盘”共用 `riot_model/diagnostics.py`；重复弱项是透明的启发式规则，不等于实际段位或输因。
+
 > 新增：Riot API 高分段英雄/位置行为参数模型，见 [MODEL_README.md](MODEL_README.md)。
 
 一个用动态机制图解释《英雄联盟》排位系统中 MMR、Rank、LP、匹配与常见 Elo 叙事的中文单页网站。
@@ -25,6 +31,18 @@ Riot API 不提供小兵实时坐标。地图上的三路兵线图标依据召�
 这里的“表现段位”是同英雄、同位置 OCE D4+ 分位的参数化可视化映射，不是 Riot Rank、MMR、胜率预测或真实个人贡献。低于钻石的标签属于分位外推，团队塔/龙等字段只代表当局团队情境。映射阈值与最低样本量统一保存在 `config/model-parameters.json` 的 `performance_rating` 中，未来获得跨段位训练样本后可以替换为真正的 `P(Rank | 指标, 英雄, 位置, 版本)` 模型。
 
 Development Key 过期后，直接在 EXE 顶部粘贴新 Key 并点击“应用输入并刷新”。Key 不会编译进 EXE，也不会写入公开模型数据。
+
+## 本地功能网页
+
+运行 `python -m tools.player_case_server --port 8765`，然后打开 `http://127.0.0.1:8765/conditional-model.html`。页面可输入任意 `玩家名#TAG`（也接受 OP.GG 玩家链接）和 Riot Development API Key，并重建最近单双排、同英雄同位置 D4+ 对比、逐局回放、双队 TAB 面板、规则团战和资源丢失候选原因。
+
+Key 只保存在本机 `.secrets/riot_api_key.txt`（已被 Git 忽略）；浏览器不直连 Riot，本地服务仅接受 loopback 与同源写请求。GitHub Pages 纯静态版仍是只读展示；要在公网提供真实查询，必须另行部署持有 production key 的后端，不应把 Key 写入前端或 GitHub Pages。
+
+## 公网安全查询后端
+
+`backend/` 提供 FastAPI/Cloud Run 部署包。公开网页只提交 Riot ID，不提交或保存玩家自己的 API Key；服务端 Key 仅从 `RIOT_API_KEY` 环境变量读取，生产部署应由 Secret Manager 注入。接口使用有界任务队列、五分钟查询缓存、OCE 区域白名单、每 IP 与每玩家限流、严格 GitHub Pages CORS、安全响应头和输出字段清洗；PUUID、Summoner ID、Account ID 与原始 Match ID 不会跨越公开接口。
+
+在 `assets/runtime-config.js` 中配置部署后的 HTTPS `apiBase`，网页便会自动隐藏本地 Key 输入框，改用 `POST /v1/analyses` 与任务轮询载入逐局评分及 Timeline。部署、密钥与单实例约束见 `backend/README.md`。公开测试前必须取得 Riot Production API Key；Development Key 只用于私人本地联调。
 
 峡谷交互模型使用 Riot Data Dragon 16.12.1 的英雄头像、小地图和召唤师技能图标。`assets/rift-atmosphere.png` 为本项目生成的氛围图。
 
