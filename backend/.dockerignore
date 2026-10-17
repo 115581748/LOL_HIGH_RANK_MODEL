@@ -1,0 +1,11 @@
+.git
+.secrets
+build
+dist
+release
+output
+portfolio
+data
+assets
+*.pyc
+__pycache__
