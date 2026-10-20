@@ -21,6 +21,13 @@
     window.MODEL_MANIFEST = manifest;
     await loadScript(manifest.assets?.conditional || "assets/conditional-model.js", revision);
     await loadScript(manifest.assets?.playerCase || "assets/player-case.js", revision);
+    const replayPath = manifest.assets?.playerReplays;
+    if (replayPath) {
+      const replayResponse = await fetch(`${replayPath}?v=${encodeURIComponent(revision)}`, { cache: "no-store" });
+      window.PLAYER_REPLAYS = replayResponse.ok ? await replayResponse.json() : {};
+    } else {
+      window.PLAYER_REPLAYS = {};
+    }
     await loadScript(appScript, revision);
   }
 

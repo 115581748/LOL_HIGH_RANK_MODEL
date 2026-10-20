@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import subprocess
@@ -22,6 +23,15 @@ CONDITIONAL_MODEL_PREFIX = "window.CONDITIONAL_MODEL="
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def validate_api_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key.startswith("RGAPI-") or not 25 <= len(key) <= 160:
+        raise ValueError("API Key 格式无效，应为 Riot Developer Portal 提供的 RGAPI- 开头密钥")
+    if any(char in "\r\n\0" for char in key):
+        raise ValueError("API Key 格式无效")
+    return key
 
 
 def parse_riot_id(value: str) -> tuple[str, str]:
@@ -75,6 +85,7 @@ class PlayerCaseManager:
         self.refresh_minutes = max(1, refresh_minutes)
         self.player_case_path = self.root / "assets" / "player-case.js"
         self.conditional_path = self.root / "assets" / "conditional-model.js"
+        self.replays_path = self.root / "assets" / "player-replays.json"
         self.manifest_path = self.root / "assets" / "model-manifest.json"
         self.lock = threading.Lock()
         self.busy = False
@@ -83,6 +94,10 @@ class PlayerCaseManager:
         self.last_error: str | None = None
         self.last_result: dict | None = None
 
+    @property
+    def secret_path(self) -> Path:
+        return self.root / ".secrets" / "riot_api_key.txt"
+
     def _settings(self) -> dict:
         return json.loads(self.config.read_text(encoding="utf-8"))
 
@@ -90,8 +105,19 @@ class PlayerCaseManager:
         key = os.environ.get("RIOT_API_KEY", "").strip()
         if key:
             return key
-        secret_path = self.root / ".secrets" / "riot_api_key.txt"
-        return secret_path.read_text(encoding="utf-8").strip() if secret_path.exists() else ""
+        return self.secret_path.read_text(encoding="utf-8").strip() if self.secret_path.exists() else ""
+
+    def save_api_key(self, value: str) -> dict:
+        key = validate_api_key(value)
+        self.secret_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.secret_path.with_suffix(".next")
+        temporary.write_text(key, encoding="ascii")
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
+        os.replace(temporary, self.secret_path)
+        return {"ok": True, "canRefresh": True, "message": "API Key 已仅保存在本机"}
 
     def _current_payload(self) -> dict:
         return load_window_payload(self.player_case_path, PLAYER_CASE_PREFIX)
@@ -152,6 +178,7 @@ class PlayerCaseManager:
         candidate_case = self.root / "assets" / f".player-case.{token}.next.js"
         candidate_conditional = self.root / "assets" / f".conditional-model.{token}.next.js"
         candidate_manifest = self.root / "assets" / f".model-manifest.{token}.next.json"
+        candidate_replays = self.root / "assets" / f".player-replays.{token}.next.json"
         try:
             current = self._current_payload()
             current_riot_id = current.get("meta", {}).get("riotId")
@@ -172,7 +199,14 @@ class PlayerCaseManager:
                 "--matches", str(matches),
                 "--cache-dir", "data/cache",
                 "--output", str(candidate_case),
+                "--replay-output", str(candidate_replays),
             ], timeout=240, env=command_env)
+            self._run([
+                "-m", "tools.annotate_web_replays",
+                "--player-case", str(candidate_case),
+                "--replays", str(candidate_replays),
+                "--output", str(candidate_replays),
+            ], timeout=120)
             candidate = load_window_payload(candidate_case, PLAYER_CASE_PREFIX)
             changed = stable_case_payload(candidate) != stable_case_payload(current)
             switched = candidate.get("meta", {}).get("riotId") != current_riot_id
@@ -195,6 +229,7 @@ class PlayerCaseManager:
                     os.replace(candidate_conditional, self.conditional_path)
                     conditional_rebuilt = True
                 os.replace(candidate_case, self.player_case_path)
+                os.replace(candidate_replays, self.replays_path)
                 self._write_player_config(game_name, tag_line)
                 self._run([
                     "-m", "tools.build_site_manifest",
@@ -221,7 +256,7 @@ class PlayerCaseManager:
             self.last_error = str(exc)
             raise
         finally:
-            for path in (candidate_case, candidate_conditional, candidate_manifest):
+            for path in (candidate_case, candidate_conditional, candidate_manifest, candidate_replays):
                 path.unlink(missing_ok=True)
             self.busy = False
             self.lock.release()
@@ -250,6 +285,12 @@ class PlayerCaseRequestHandler(SimpleHTTPRequestHandler):
         request_host = urllib.parse.urlparse(f"//{host}").hostname
         return origin in {f"http://{host}", f"https://{host}"} and origin_host in {"127.0.0.1", "localhost", "::1"} and request_host in {"127.0.0.1", "localhost", "::1"}
 
+    def _local_client(self) -> bool:
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
     def _read_json(self) -> dict:
         if self.headers.get_content_type() != "application/json":
             raise ValueError("请求必须使用 application/json")
@@ -267,14 +308,18 @@ class PlayerCaseRequestHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
-        if path not in {"/api/player-case/refresh", "/api/player-case/switch"}:
+        if path not in {"/api/player-case/refresh", "/api/player-case/switch", "/api/player-case/key"}:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Unknown API endpoint"})
             return
-        if not self._same_origin():
+        if not self._local_client() or not self._same_origin():
             self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Cross-origin requests are not allowed"})
             return
         try:
             body = self._read_json()
+            if path.endswith("/key"):
+                result = self.manager.save_api_key(body.get("apiKey", ""))
+                self._send_json(HTTPStatus.OK, result)
+                return
             riot_id = body.get("riotId") if path.endswith("switch") else None
             if path.endswith("switch") and not riot_id:
                 raise ValueError("请输入要切换的玩家名#TAG")

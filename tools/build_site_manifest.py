@@ -23,6 +23,7 @@ def build(args):
     optional_assets = {
         "conditional": Path(args.conditional),
         "playerCase": Path(args.player_case),
+        "playerReplays": Path(args.player_replays),
     }
     site_assets = [Path(value) for value in args.site_assets]
     digest_paths = [
@@ -58,6 +59,7 @@ def main():
     parser.add_argument("--extras", default="assets/model-extras.js")
     parser.add_argument("--conditional", default="assets/conditional-model.js")
     parser.add_argument("--player-case", default="assets/player-case.js")
+    parser.add_argument("--player-replays", default="assets/player-replays.json")
     parser.add_argument(
         "--site-assets",
         nargs="*",

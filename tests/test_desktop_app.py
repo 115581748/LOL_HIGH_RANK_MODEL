@@ -2,6 +2,8 @@ import subprocess
 import sys
 import textwrap
 import unittest
+
+from desktop.english_ui import english
 from pathlib import Path
 
 from desktop.lol_high_rank_comparator import (
@@ -16,14 +18,17 @@ from desktop.lol_high_rank_comparator import (
     focus_participant_ids,
     map_coordinates,
     match_performance_profile,
+    match_review_summary,
     metric_performance_percentile,
     metric_rating_text,
+    load_local_case,
     nearest_objective_loss,
     objective_loss_analysis,
     objective_loss_events,
     objective_event_position,
     objective_snapshot,
     parse_riot_id,
+    performance_grade,
     performance_tier,
     recent_form_summary,
     replay_phase,
@@ -35,6 +40,42 @@ from desktop.lol_high_rank_comparator import (
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_english_presentation_translates_static_and_dynamic_text(self):
+        self.assertEqual(english("峡谷天平"), "RiftScale")
+        self.assertEqual(english("前期 0–15"), "Early 0–15")
+        self.assertEqual(english("3 场 · 胜率 67%"), "3 matches · win rate 67%")
+
+    def test_english_desktop_translates_screenshot_strings_and_api_dialog(self):
+        visible_strings = (
+            "最近 19 场发现 1 项达到重复弱项规则。双击证据可回到该局的数据对比。",
+            "全场视野分/分钟 · 弱四分位 3/5",
+            "Riot API Key 已失效，请粘贴新 Key",
+            "最近 19 场没有指标达到重复弱项阈值；偶发差距仍列出，但不会被包装成稳定问题。",
+        )
+        for source in visible_strings:
+            with self.subTest(source=source):
+                translated = english(source)
+                self.assertFalse(any("\u4e00" <= char <= "\u9fff" for char in translated), translated)
+        self.assertIn("1 recurring weakness met the rule", english(visible_strings[0]))
+        self.assertIn("Vision score/min · bottom quartile 3/5", english(visible_strings[1]))
+        self.assertIn("expired", english(visible_strings[2]))
+
+    def test_unreadable_local_case_falls_back_to_packaged_case(self):
+        class DeniedPath:
+            def exists(self):
+                raise PermissionError("denied")
+
+        bootstrap = Path(__file__).resolve().parents[1] / "assets" / "player-case.js"
+        payload, warning = load_local_case(DeniedPath(), bootstrap)
+        self.assertTrue(payload.get("matches"))
+        self.assertIn("已使用内置案例", warning)
+
+    def test_public_build_can_start_without_bundled_player_data(self):
+        payload, warning = load_local_case(Path("missing-player-case.json"), Path("missing-bootstrap.json"))
+        self.assertEqual(payload["meta"]["status"], "WAITING_FOR_RIOT_KEY")
+        self.assertEqual(payload["matches"], [])
+        self.assertIsNone(warning)
+
     def test_dynamic_ui_helpers(self):
         self.assertEqual(blend_hex("#000000", "#ffffff", 0.5), "#808080")
         self.assertEqual(blend_hex("#112233", "#ffffff", -1), "#112233")
@@ -71,15 +112,26 @@ class DesktopAppTests(unittest.TestCase):
         self.assertEqual(row[5], "+15")
         self.assertEqual(row[6], "+5")
         self.assertEqual(row[7], "-5")
-        self.assertEqual(row[8], "≈钻石 IV · P62")
+        self.assertEqual(row[8], "合格 · P62")
 
     def test_metric_performance_tiers_respect_direction_and_context(self):
         stats = {"p10": 1, "p25": 2, "median": 3, "p75": 4, "p90": 5, "n": 100}
         self.assertEqual(metric_performance_percentile("early_deaths", 1, stats), 90)
-        self.assertEqual(metric_rating_text("early_deaths", 1, stats), "≈钻石 I · P90")
+        self.assertEqual(metric_rating_text("early_deaths", 1, stats), "优秀 · P90")
         self.assertEqual(metric_rating_text("late_damage_taken_per_min", 4, stats), "承伤量级 · P75")
+        self.assertEqual(metric_rating_text("mid_team_dragons", 4, stats), "团队情境 · P75")
+        self.assertEqual(metric_rating_text("early_first_gank_minute", 0, stats), "—")
         self.assertEqual(performance_tier(99)["label"], "王者")
         self.assertEqual(performance_tier(50)["label"], "钻石 IV")
+
+    def test_plain_language_grades_have_exact_quartile_boundaries(self):
+        for percentile, expected in ((100, "优秀"), (75, "优秀"), (74.99, "合格"),
+                                     (50, "合格"), (49.99, "欠缺"), (25, "欠缺"),
+                                     (24.99, "垃圾"), (0, "垃圾")):
+            with self.subTest(percentile=percentile):
+                self.assertEqual(performance_grade(percentile)["label"], expected)
+        self.assertIsNone(performance_grade(None))
+        self.assertIsNone(performance_grade(float("nan")))
 
     def test_match_performance_profile_uses_robust_category_medians(self):
         stats = {"p10": 10, "p25": 20, "median": 30, "p75": 40, "p90": 50, "n": 100}
@@ -104,8 +156,10 @@ class DesktopAppTests(unittest.TestCase):
         }
         profile = {item["category"]: item for item in match_performance_profile(match, "EARLY", baselines)}
         self.assertEqual(profile["FARMING"]["percentile"], 75)
+        self.assertEqual(profile["FARMING"]["grade"], "优秀")
         self.assertEqual(profile["FARMING"]["tier"], "钻石 IV")
         self.assertEqual(profile["SURVIVAL"]["percentile"], 90)
+        self.assertEqual(profile["SURVIVAL"]["grade"], "优秀")
         self.assertEqual(profile["SURVIVAL"]["tier"], "钻石 I")
         self.assertEqual(profile["PRESSURE"]["sampleSize"], 100)
 
@@ -131,6 +185,31 @@ class DesktopAppTests(unittest.TestCase):
         self.assertEqual(profile[0]["label"], "视野")
         self.assertEqual(profile[0]["percentile"], 75)
         self.assertEqual(profile[0]["sampleSize"], 240)
+
+    def test_match_review_summary_points_to_weakest_personal_metric(self):
+        stats = {"p10": 10, "p25": 20, "median": 30, "p75": 40, "p90": 50, "n": 100}
+        baselines = {
+            "Ashe|BOTTOM|EARLY": {"metrics": {"early_cs_15": stats, "early_gold_15": stats}},
+            "Ashe|BOTTOM|MID": {"metrics": {"mid_team_dragons": stats}},
+        }
+        match = {"champion": "Ashe", "position": "BOTTOM", "durationMin": 28,
+                 "early_cs_15": 12, "early_gold_15": 35, "mid_team_dragons": 0}
+        summary = match_review_summary(match, baselines)
+        self.assertEqual(summary["status"], "review")
+        self.assertEqual(summary["evidence"][0]["metric"], "early_cs_15")
+        self.assertIn("15 分钟 CS", summary["text"])
+        self.assertIn("不证明输因", summary["text"])
+        self.assertNotIn("mid_team_dragons", str(summary))
+        translated = english(summary["text"])
+        self.assertIn("Review first:", translated)
+        self.assertFalse(any("\u4e00" <= char <= "\u9fff" for char in translated))
+        self.assertEqual(match_review_summary(match, baselines, minimum_samples=101)["status"], "insufficient")
+
+    def test_match_review_summary_does_not_invent_problem_above_median(self):
+        stats = {"p10": 10, "p25": 20, "median": 30, "p75": 40, "p90": 50, "n": 100}
+        baseline = {"Ashe|BOTTOM|EARLY": {"metrics": {"early_cs_15": stats}}}
+        match = {"champion": "Ashe", "position": "BOTTOM", "durationMin": 24, "early_cs_15": 35}
+        self.assertEqual(match_review_summary(match, baseline)["status"], "none")
 
     def test_map_coordinates_flip_vertical_axis(self):
         self.assertEqual(map_coordinates(0, 0, 600, 600), (0.0, 600.0))

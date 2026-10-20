@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from riot_model.client import RiotClient
-from riot_model.features import extract_player_match
+from riot_model.features import extract_match_replay, extract_player_match
 from riot_model.settings import load_settings
 from tools.build_conditional_model import (
     PHASE_METRICS,
@@ -118,6 +118,12 @@ def case_payload(
 
 
 def write_payload(payload: dict, output: Path) -> None:
+    baseline_path = Path(__file__).resolve().parents[1] / "desktop" / "all-champion-baselines.json"
+    if baseline_path.exists():
+        from riot_model.diagnostics import review_report
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        payload["diagnosis"] = review_report(payload.get("matches", []), baseline.get("profiles", {}))
+        payload["diagnosis"]["benchmarkMeta"] = baseline.get("meta", {})
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write("window.PLAYER_CASE=" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + ";\n")
@@ -127,10 +133,15 @@ def build(args):
     settings = load_settings(args.config)
     conditional_parameters = settings["conditional_model"]
     split_minute = int(conditional_parameters["late_phase_start_minute"])
-    client = RiotClient(os.environ.get("RIOT_API_KEY", ""), args.platform, args.cache_dir)
+    # Cloud workers pass the secret directly so concurrent jobs never need to
+    # mutate process-wide environment variables.  The CLI keeps its existing
+    # RIOT_API_KEY behaviour.
+    api_key = getattr(args, "api_key", None) or os.environ.get("RIOT_API_KEY", "")
+    client = RiotClient(api_key, args.platform, args.cache_dir)
     account = client.account_by_riot_id(args.riot_id, args.tag_line)
     puuid = account["puuid"]
     rows = []
+    replay_by_start = {}
     requested_ids = client.match_ids(puuid, args.matches)
     for match_id in requested_ids:
         match = client.match(match_id)
@@ -148,6 +159,9 @@ def build(args):
         late_participations = number(extracted.get("late_teamfight_participations")) or 0
         extracted["late_teamfight_participation_rate"] = late_participations / late_fights if late_fights else None
         rows.append(extracted)
+        replay = extract_match_replay(match, timeline)
+        if replay:
+            replay_by_start[int(float(extracted.get("game_start_ms") or 0))] = replay
     payload = case_payload(
         rows,
         riot_id=f"{account.get('gameName', args.riot_id)}#{account.get('tagLine', args.tag_line)}",
@@ -157,6 +171,14 @@ def build(args):
     )
     output = Path(args.output)
     write_payload(payload, output)
+    if args.replay_output:
+        replay_payload = {
+            public["matchRef"]: replay_by_start[public["gameStartMs"]]
+            for public in payload.get("matches", []) if public.get("gameStartMs") in replay_by_start
+        }
+        replay_output = Path(args.replay_output)
+        replay_output.parent.mkdir(parents=True, exist_ok=True)
+        replay_output.write_text(json.dumps(replay_payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     profile = primary_profile(rows)
     print(
         f"wrote {len(rows)} recent ranked-solo matches for {payload['meta']['riotId']} "
@@ -174,6 +196,7 @@ def main():
     parser.add_argument("--matches", type=int, default=20)
     parser.add_argument("--cache-dir", default="data/cache")
     parser.add_argument("--output", default="assets/player-case.js")
+    parser.add_argument("--replay-output", default="")
     build(parser.parse_args())
 
 

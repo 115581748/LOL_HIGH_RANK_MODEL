@@ -12,7 +12,7 @@ from riot_model.features import extract_match_replay, extract_player_match
 from tools.build_conditional_model import group_specs, phase_metrics, unique_player_matches
 from tools.build_player_case import primary_profile, public_match
 from tools.audit_player_matches import audit_csv, audit_jsonl
-from tools.player_case_server import parse_riot_id
+from tools.player_case_server import PLAYER_CASE_PREFIX, PlayerCaseManager, parse_riot_id, validate_api_key
 from tools.refresh_comparison_profiles import PREFIX as CONDITIONAL_PREFIX, refresh as refresh_comparisons
 from tools.derive_late_rates import late_rate_values
 
@@ -31,6 +31,44 @@ class PipelineTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             parse_riot_id("missing-tag")
+
+    def test_local_service_saves_api_key_without_exposing_it(self):
+        key = "RGAPI-" + "test-placeholder-" * 3
+        self.assertEqual(validate_api_key(key), key)
+        for invalid in ("", "abc", "RGAPI-short", "RGAPI-good-looking\nleak"):
+            with self.assertRaises(ValueError):
+                validate_api_key(invalid)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assets").mkdir()
+            (root / "assets" / "player-case.js").write_text(
+                PLAYER_CASE_PREFIX + json.dumps({"meta": {"riotId": "Test#OC"}}) + ";", encoding="utf-8"
+            )
+            config = root / "config.json"
+            config.write_text("{}", encoding="utf-8")
+            manager = PlayerCaseManager(root, config, 10)
+            response = manager.save_api_key(key)
+            self.assertTrue(response["canRefresh"])
+            self.assertNotIn(key, json.dumps(response))
+            self.assertEqual((root / ".secrets" / "riot_api_key.txt").read_text(encoding="ascii"), key)
+            self.assertTrue(manager.status()["canRefresh"])
+
+    def test_browser_replays_match_public_refs_and_keep_evidence_links(self):
+        root = Path(__file__).resolve().parents[1]
+        case_text = (root / "assets" / "player-case.js").read_text(encoding="utf-8").strip()
+        case = json.loads(case_text[len(PLAYER_CASE_PREFIX):].removesuffix(";"))
+        replays = json.loads((root / "assets" / "player-replays.json").read_text(encoding="utf-8"))
+        refs = {match["matchRef"] for match in case.get("matches", [])}
+        self.assertTrue(replays)
+        self.assertTrue(set(replays).issubset(refs))
+        self.assertNotIn("RGAPI-", json.dumps(replays))
+        for replay in replays.values():
+            self.assertTrue(replay.get("frames"))
+            for analysis in replay.get("objectiveAnalyses", []):
+                facts = {fact["id"] for fact in analysis.get("facts", [])}
+                primary = next((item for item in analysis.get("hypotheses", []) if item["id"] == analysis.get("primaryHypothesisId")), None)
+                if primary:
+                    self.assertTrue(set(primary["evidenceIds"]).issubset(facts))
 
     def test_player_match_audit_detects_and_cleans_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:

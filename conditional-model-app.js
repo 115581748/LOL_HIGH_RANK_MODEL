@@ -1,16 +1,23 @@
 (() => {
   const model = window.CONDITIONAL_MODEL || { meta: {}, dimensions: {}, profiles: {}, comparisonProfiles: {} };
-  const playerCase = window.PLAYER_CASE || { meta: {}, summaries: {}, matches: [] };
+  let playerCase = window.PLAYER_CASE || { meta: {}, summaries: {}, matches: [] };
+  let playerReplays = window.PLAYER_REPLAYS || {};
   const $ = (id) => document.getElementById(id);
   const lateStartMinute = Number(model.meta?.parameters?.late_phase_start_minute || 25);
-  const playerServiceBase = "api/player-case";
+  const remoteApiBase = String(window.RIFTSCALE_RUNTIME?.apiBase || "").replace(/\/$/, "");
+  const cloudService = Boolean(remoteApiBase);
+  const playerServiceBase = cloudService ? remoteApiBase : "api/player-case";
   const loadedRevision = String(window.MODEL_MANIFEST?.revision || "");
+  const replayUi = { matchRef: null, second: 0, timer: null, itemData: {} };
 
   const phaseNames = { EARLY: "前期 0–15", MID: `中期 15–${lateStartMinute}`, LATE: `后期 ${lateStartMinute}+` };
   const rankNames = { ALL: "D4+ 整体", DIAMOND_IV_II: "Diamond IV–II", DIAMOND_I: "Diamond I", MASTER_PLUS: "Master+" };
   const positionNames = { TOP: "上路", JUNGLE: "打野", MIDDLE: "中路", BOTTOM: "下路", UTILITY: "辅助" };
   const scopeNames = { EXACT: "英雄 × 位置 × 版本", CHAMPION_ALL_PATCH: "英雄 × 位置 × 跨版本", ROLE_PATCH: "位置 × 版本", ROLE_ALL: "位置 × 跨版本" };
   const confidenceNames = { HIGH: "高置信度", MEDIUM: "中等置信度", LOW: "低置信度" };
+  const lowerIsBetterMetrics = new Set(["early_deaths", "mid_deaths", "late_deaths", "late_first_target_deaths", "early_first_gank_minute", "mid_first_gank_minute"]);
+  const teamContextMetrics = new Set(["mid_team_turrets", "mid_team_dragons", "early_team_dragons", "early_team_void_grubs", "early_team_rift_heralds", "mid_team_void_grubs", "mid_team_rift_heralds"]);
+  const magnitudeOnlyMetrics = new Set(["late_damage_taken_per_min"]);
   const metricNames = {
     early_gold_15: "15 分钟经济增长", early_xp_15: "15 分钟经验", early_cs_15: "15 分钟 CS",
     early_kills: "前期击杀", early_deaths: "前期死亡", early_assists: "前期助攻",
@@ -168,6 +175,62 @@
     return null;
   }
 
+  function metricPerformancePercentile(metric, value, stats) {
+    if ((metric === "early_first_gank_minute" || metric === "mid_first_gank_minute") && Number(value) <= 0) return null;
+    const percentile = approximatePercentile(value, stats);
+    if (percentile == null) return null;
+    return lowerIsBetterMetrics.has(metric) ? 100 - percentile : percentile;
+  }
+
+  function metricVerdict(metric, percentile, side) {
+    if (percentile == null) return `<span class="metric-verdict unavailable">${side}：无法判档</span>`;
+    const rank = `P${Math.round(percentile)}`;
+    if (teamContextMetrics.has(metric)) return `<span class="metric-verdict context">${side}：团队情境 · ${rank}</span>`;
+    if (magnitudeOnlyMetrics.has(metric)) return `<span class="metric-verdict context">${side}：承伤量级 · ${rank}</span>`;
+    const grade = percentile >= 75 ? ["优秀", "excellent"] : percentile >= 50 ? ["合格", "qualified"] : percentile >= 25 ? ["欠缺", "lacking"] : ["垃圾", "poor"];
+    return `<span class="metric-verdict ${grade[1]}">${side}：${grade[0]} · ${rank}</span>`;
+  }
+
+  function reviewHint(metric) {
+    if (metric.includes("deaths") || metric.includes("first_target")) return "回看阵亡前的站位、视野与撤退时机。";
+    if (metric.includes("cs") || metric.includes("gold") || metric.includes("xp")) return "回看兵线、回城和空转时间，核对资源差从何时开始。";
+    if (metric.includes("gank") || metric.includes("jungle")) return "回看路线与抓人时机，核对双方位置。";
+    if (metric.includes("damage")) return "先核对到场、存活和可输出时间。";
+    if (metric.includes("vision")) return "回看资源争夺前的布眼与排眼。";
+    if (metric.includes("teamfight") || metric.includes("kills") || metric.includes("assists")) return "回看团战到场与进场条件。";
+    return "回看相关时间点的事件与小地图。";
+  }
+
+  function matchGradeSummary(match) {
+    const counts = { poor: 0, lacking: 0 };
+    const weakest = [];
+    let assessed = 0;
+    const minimumSamples = Number(window.MODEL_MANIFEST?.parameters?.performance_rating?.minimum_metric_samples || 20);
+    for (const phase of ["EARLY", "MID", "LATE"]) {
+      if ((phase === "EARLY" && Number(match.durationMin) < 15) || (phase === "MID" && Number(match.durationMin) < 25) || (phase === "LATE" && Number(match.durationMin) <= 25)) continue;
+      const profile = resolveHeroBaseline(match, phase, "player")?.value;
+      if (!profile) continue;
+      for (const metric of metricsForPhase(phase, match.position)) {
+        if (teamContextMetrics.has(metric) || magnitudeOnlyMetrics.has(metric)) continue;
+        const value = match[metric];
+        const stats = profile.metrics?.[metric];
+        if (value === null || value === undefined || value === "" || !stats || !Number.isFinite(Number(stats.n)) || Number(stats.n) < minimumSamples) continue;
+        const percentile = metricPerformancePercentile(metric, Number(value), stats);
+        if (percentile == null) continue;
+        assessed += 1;
+        if (percentile < 25) counts.poor += 1;
+        else if (percentile < 50) counts.lacking += 1;
+        if (percentile < 50) weakest.push({ metric, phase, percentile, n: stats.n });
+      }
+    }
+    if (!assessed) return `<div class="match-review-summary unavailable">同英雄同位置基准或本局指标不足，暂不判定。</div>`;
+    if (!counts.poor && !counts.lacking) return `<div class="match-review-summary qualified"><strong>没有低于 P50 的个人指标</strong><small>可核对对位差和关键事件；不直接归因胜负。</small></div>`;
+    weakest.sort((left, right) => left.percentile - right.percentile);
+    const primary = weakest[0];
+    const grade = primary.percentile < 25 ? "垃圾" : "欠缺";
+    return `<div class="match-review-summary ${counts.poor ? "poor" : "lacking"}"><strong>优先复盘：${escapeHtml(metricNames[primary.metric] || primary.metric)} ${grade} · P${Math.round(primary.percentile)}</strong><small>${escapeHtml(reviewHint(primary.metric))}</small><small>n=${primary.n} · ${counts.poor} 项垃圾 / ${counts.lacking} 项欠缺；仅为复盘线索，不证明输因。</small></div>`;
+  }
+
   function matchMetricCell(match, metric, playerProfile, opponentProfile) {
     const playerValue = Number(match[metric]);
     const opponentValue = Number(match[`opponent_${metric}`]);
@@ -179,16 +242,16 @@
     const headToHead = hasPlayer && hasOpponent ? signedMetric(metric, playerValue - opponentValue) : "—";
     const playerGap = hasPlayer && playerStats ? signedMetric(metric, playerValue - Number(playerStats.median)) : "—";
     const opponentGap = hasOpponent && opponentStats ? signedMetric(metric, opponentValue - Number(opponentStats.median)) : "—";
-    const playerPercentile = hasPlayer && playerStats ? approximatePercentile(playerValue, playerStats) : null;
-    const opponentPercentile = hasOpponent && opponentStats ? approximatePercentile(opponentValue, opponentStats) : null;
-    return `<td class="comparison-metric"><b><span>你 ${hasPlayer ? fmtMetric(metric, playerValue) : "—"}</span><span>对 ${hasOpponent ? fmtMetric(metric, opponentValue) : "—"}</span></b><small>基准 · 你 ${playerStats ? fmtMetric(metric, playerStats.median) : "—"} · 对 ${opponentStats ? fmtMetric(metric, opponentStats.median) : "—"}</small><em><span>对位差 ${headToHead}</span><span>你/基准 ${playerGap} · ${playerPercentile == null ? "—" : `P${Math.round(playerPercentile)}`}</span><span>对/基准 ${opponentGap} · ${opponentPercentile == null ? "—" : `P${Math.round(opponentPercentile)}`}</span></em></td>`;
+    const playerPercentile = hasPlayer && playerStats ? metricPerformancePercentile(metric, playerValue, playerStats) : null;
+    const opponentPercentile = hasOpponent && opponentStats ? metricPerformancePercentile(metric, opponentValue, opponentStats) : null;
+    return `<td class="comparison-metric"><b><span>你 ${hasPlayer ? fmtMetric(metric, playerValue) : "—"}</span><span>对 ${hasOpponent ? fmtMetric(metric, opponentValue) : "—"}</span></b><small>基准 · 你 ${playerStats ? fmtMetric(metric, playerStats.median) : "—"} · 对 ${opponentStats ? fmtMetric(metric, opponentStats.median) : "—"}</small><div class="metric-verdicts">${metricVerdict(metric, playerPercentile, "你")}${metricVerdict(metric, opponentPercentile, "对")}</div><em><span>对位差 ${headToHead}</span><span>你/基准 ${playerGap}</span><span>对/基准 ${opponentGap}</span></em></td>`;
   }
 
   function renderMatchComparisons() {
     const phase = $("caseComparisonPhase").value;
     const metrics = metricsForPhase(phase, playerCase.meta?.primaryPosition);
     const matches = playerCase.matches || [];
-    $("matchComparisonHead").innerHTML = `<tr><th>场次</th><th>你 / 对位</th><th>结果</th><th>补丁</th><th>双方英雄固定基准</th>${metrics.map((metric) => `<th title="${escapeHtml(metric)}">${escapeHtml(shortMetric(metric))}</th>`).join("")}</tr>`;
+    $("matchComparisonHead").innerHTML = `<tr><th>场次</th><th>本局先看</th><th>你 / 对位</th><th>结果</th><th>补丁</th><th>双方英雄固定基准</th>${metrics.map((metric) => `<th title="${escapeHtml(metric)}">${escapeHtml(shortMetric(metric))}</th>`).join("")}</tr>`;
     let eligible = 0;
     let playerResolvedCount = 0;
     let opponentResolvedCount = 0;
@@ -205,8 +268,8 @@
       const baseline = !reachedPhase
         ? `<span class="no-baseline">未到 ${lateStartMinute} 分钟</span>`
         : `${baselineLine("你", match.champion, playerResolved)}${baselineLine("对", match.opponentChampion, opponentResolved)}`;
-      return `<tr><td><b>${escapeHtml(match.matchRef)}</b><small>${fmt(match.durationMin)} 分钟</small></td><td><b>${escapeHtml(match.champion)} <i>vs</i> ${escapeHtml(match.opponentChampion || "未知")}</b><small>${escapeHtml(positionNames[match.position] || match.position)}</small></td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td><b>${escapeHtml(match.patch)}</b></td><td class="baseline-cell">${baseline}</td>${metrics.map((metric) => matchMetricCell(match, metric, playerResolved?.value, opponentResolved?.value)).join("")}</tr>`;
-    }).join("") : `<tr><td class="empty" colspan="${metrics.length + 5}">尚未载入逐局案例数据。</td></tr>`;
+      return `<tr><td><b>${escapeHtml(match.matchRef)}</b><small>${fmt(match.durationMin)} 分钟</small></td><td>${matchGradeSummary(match)}</td><td><b>${escapeHtml(match.champion)} <i>vs</i> ${escapeHtml(match.opponentChampion || "未知")}</b><small>${escapeHtml(positionNames[match.position] || match.position)}</small></td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td><b>${escapeHtml(match.patch)}</b></td><td class="baseline-cell">${baseline}</td>${metrics.map((metric) => matchMetricCell(match, metric, playerResolved?.value, opponentResolved?.value)).join("")}</tr>`;
+    }).join("") : `<tr><td class="empty" colspan="${metrics.length + 6}">尚未载入逐局案例数据。</td></tr>`;
     const phaseEligible = phase === "LATE" ? `达到 ${lateStartMinute} 分钟 ${eligible}/${matches.length} 场` : `${eligible} 场`;
     $("matchComparisonSummary").textContent = `${phaseNames[phase]} · ${phaseEligible} · 你的英雄基准 ${playerResolvedCount}/${eligible || 0} 场 · 对手英雄基准 ${opponentResolvedCount}/${eligible || 0} 场 · 同英雄同位置、跨版本 · 段位口径 ${rankNames[$("rankFilter").value]} · 去重后最低样本 ${model.meta.parameters?.comparison_minimum_samples || 3}`;
   }
@@ -252,11 +315,11 @@
     $("distributionRows").innerHTML = rows.map(([metric, stats]) => {
       const playerStats = summary?.metrics?.[metric];
       const playerValue = playerStats?.median;
-      const percentile = approximatePercentile(playerValue, stats);
+      const percentile = playerStats ? metricPerformancePercentile(metric, playerValue, stats) : null;
       const gap = playerStats ? Number(playerValue) - Number(stats.median) : null;
       const gapRate = playerStats ? relativeGap(playerValue, stats.median) : null;
       const gapDetail = gapRate == null ? "基线为 0，未算比例" : `${gapRate > 0 ? "+" : ""}${gapRate.toFixed(1)}%`;
-      return `<tr><td class="metric-name"><b>${escapeHtml(metricNames[metric] || metric)}</b><code>${escapeHtml(metric)}</code></td><td>${stats.n}<br><small>${(stats.missingRate * 100).toFixed(0)}% 缺失</small></td><td>${fmtMetric(metric, stats.p10)}</td><td>${fmtMetric(metric, stats.p25)}</td><td>${fmtMetric(metric, stats.median)}</td><td>${fmtMetric(metric, stats.p75)}</td><td>${fmtMetric(metric, stats.p90)}</td><td>${fmtMetric(metric, stats.mad)}</td><td class="player-value">${playerStats ? `${fmtMetric(metric, playerValue)}<br><small>n=${summary.sampleSize}</small>` : "—"}</td><td class="gap-value">${playerStats ? `${signedMetric(metric, gap)}<br><small>${gapDetail}</small>` : "—"}</td><td class="percentile">${percentile == null ? "—" : `P${Math.round(percentile)}`}</td></tr>`;
+      return `<tr><td class="metric-name"><b>${escapeHtml(metricNames[metric] || metric)}</b><code>${escapeHtml(metric)}</code></td><td>${stats.n}<br><small>${(stats.missingRate * 100).toFixed(0)}% 缺失</small></td><td>${fmtMetric(metric, stats.p10)}</td><td>${fmtMetric(metric, stats.p25)}</td><td>${fmtMetric(metric, stats.median)}</td><td>${fmtMetric(metric, stats.p75)}</td><td>${fmtMetric(metric, stats.p90)}</td><td>${fmtMetric(metric, stats.mad)}</td><td class="player-value">${playerStats ? `${fmtMetric(metric, playerValue)}<br><small>n=${summary.sampleSize}</small>` : "—"}</td><td class="gap-value">${playerStats ? `${signedMetric(metric, gap)}<br><small>${gapDetail}</small>` : "—"}</td><td class="percentile">${percentile == null ? "—" : metricVerdict(metric, percentile, "玩家")}</td></tr>`;
     }).join("");
   }
 
@@ -299,6 +362,7 @@
   }
 
   function renderCase() {
+    renderReview();
     const meta = playerCase.meta || {};
     const riotId = String(meta.riotId || "Geolonwe#OC");
     const separator = riotId.lastIndexOf("#");
@@ -319,8 +383,263 @@
       ? `${primaryChampion} ${positionNames[primaryPosition] || primaryPosition}共 ${meta.primaryChampionPositionMatches} 场。上表差值统一按“玩家样本中位数 − 当前高分段基线中位数”计算，不附加主观定性。`
       : "尚未载入案例数据；提供有效 Key 后可重新生成。";
     const matches = playerCase.matches || [];
-    $("recentMatches").innerHTML = matches.length ? matches.map((match) => `<tr><td>${escapeHtml(match.matchRef)}</td><td><b>${escapeHtml(match.champion)}</b><small>vs ${escapeHtml(match.opponentChampion || "未知")}</small></td><td>${escapeHtml(positionNames[match.position] || match.position)}</td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td>${fmt(match.early_cs_15)}</td><td>${fmt(match.mid_cs_gain)}</td><td>${fmt(match.mid_champion_damage)}</td><td>${fmt(match.late_first_target_deaths)}</td></tr>`).join("") : `<tr><td class="empty" colspan="8">尚未载入逐局案例数据。</td></tr>`;
+    $("recentMatches").innerHTML = matches.length ? matches.map((match) => `<tr data-match-ref="${escapeHtml(match.matchRef)}"><td>${escapeHtml(match.matchRef)}</td><td><b>${escapeHtml(match.champion)}</b><small>vs ${escapeHtml(match.opponentChampion || "未知")}</small></td><td>${escapeHtml(positionNames[match.position] || match.position)}</td><td class="${match.win ? "win" : "loss"}">${match.win ? "胜" : "负"}</td><td>${fmt(match.early_cs_15)}</td><td>${fmt(match.mid_cs_gain)}</td><td>${fmt(match.mid_champion_damage)}</td><td>${fmt(match.late_first_target_deaths)}</td></tr>`).join("") : `<tr><td class="empty" colspan="8">尚未载入逐局案例数据。</td></tr>`;
     renderMatchComparisons();
+  }
+
+  function renderReview() {
+    const report = playerCase.diagnosis || {};
+    const findings = report.findings || [];
+    const recurring = findings.filter((item) => item.recurring);
+    const latest = Number(report.latestGameStartMs);
+    $("reviewFreshness").textContent = Number.isFinite(latest) ? `最近样本 ${new Date(latest).toLocaleDateString("zh-CN")}` : "没有有效样本";
+    $("reviewHeadline").textContent = recurring.length
+      ? `发现 ${recurring.length} 项达到重复弱项规则。先处理反复出现、而且能回到具体比赛核对的差距。`
+      : `最近 ${Number(report.games || 0)} 场没有指标达到重复弱项阈值；下面仍保留偶发差距，但不把它们包装成稳定问题。`;
+    $("reviewBoundary").textContent = report.boundary || "这里只给出复盘提示，不证明输因，也不等于实际段位。";
+    if (!findings.length) {
+      $("reviewFindings").innerHTML = `<article class="review-empty">当前没有满足同英雄同位置和最低样本量要求的可比指标。</article>`;
+      return;
+    }
+    $("reviewFindings").innerHTML = findings.map((finding, index) => {
+      const ratio = finding.eligible ? finding.weakCount / finding.eligible * 100 : 0;
+      const badge = finding.recurring ? "重复弱项" : finding.weakCount ? "偶发差距" : "未触及弱四分位";
+      const rows = finding.evidence.map((row) => `<tr class="${row.weak ? "weak" : ""}"><td>${new Date(row.gameStartMs).toLocaleDateString("zh-CN")}</td><td>${escapeHtml(row.champion)} · ${row.win ? "胜" : "负"}</td><td>${fmtMetric(finding.metric, row.value)}</td><td>${fmtMetric(finding.metric, row.baseline)}</td><td>${signedMetric(finding.metric, row.gap)}</td><td>n=${row.n}</td></tr>`).join("");
+      return `<details class="review-card ${finding.recurring ? "recurring" : ""}"${index === 0 ? " open" : ""}><summary><div><span class="review-badge">${badge}</span><h3>${escapeHtml(finding.label)}</h3><p>${finding.weakCount}/${finding.eligible} 场落入弱四分位 · ${finding.belowCount}/${finding.eligible} 场弱于中位数</p></div><strong>${ratio.toFixed(0)}%</strong></summary><div class="review-meter"><i style="width:${Math.max(0, Math.min(100, ratio))}%"></i></div><p class="review-action">下一步：${escapeHtml(finding.action)}</p><div class="table-wrap"><table class="metric-table review-table"><thead><tr><th>比赛</th><th>英雄 / 胜负</th><th>本局</th><th>基准中位数</th><th>差距</th><th>基准样本</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+    }).join("");
+  }
+
+  function replayEvents(replay) {
+    return (replay?.frames || []).flatMap((frame) => frame.events || []).sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+  }
+
+  function replayClock(second) {
+    const safe = Math.max(0, Math.floor(Number(second) || 0));
+    return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+  }
+
+  function frameAtSecond(replay, second) {
+    const frames = replay?.frames || [];
+    if (!frames.length) return null;
+    let frame = frames[0];
+    for (const candidate of frames) {
+      if (Number(candidate.timestamp || 0) > second * 1000) break;
+      frame = candidate;
+    }
+    return frame;
+  }
+
+  function estimatedRespawnSeconds(level, gameSecond) {
+    const base = [10, 10, 12, 12, 14, 16, 20, 25, 28, 30, 32, 35, 37, 40, 42, 45, 48, 52];
+    const safeLevel = Math.max(1, Math.min(18, Number(level) || 1));
+    const progress = Math.min(1, Math.max(0, (gameSecond - 900) / 2400));
+    return Math.max(1, Math.round(base[safeLevel - 1] * (1 + 0.5 * progress)));
+  }
+
+  function deathStatesAt(replay, second) {
+    const states = {};
+    replayEvents(replay).forEach((event) => {
+      const eventSecond = Math.floor(Number(event.timestamp || 0) / 1000);
+      if (eventSecond > second) return;
+      if (event.type === "CHAMPION_RESPAWN") {
+        delete states[Number(event.participantId || 0)];
+        return;
+      }
+      if (event.type !== "CHAMPION_KILL") return;
+      const participantId = Number(event.victimId || 0);
+      const sampled = frameAtSecond(replay, eventSecond)?.players?.find((row) => Number(row.participantId) === participantId) || {};
+      const respawnAt = eventSecond + estimatedRespawnSeconds(sampled.level, eventSecond);
+      states[participantId] = { position: event.position || sampled, respawnAt, remaining: Math.max(0, respawnAt - second) };
+    });
+    Object.keys(states).forEach((id) => { if (states[id].respawnAt <= second) delete states[id]; });
+    return states;
+  }
+
+  function replayItemState(replay, second) {
+    const state = {};
+    const remove = (participantId, itemId) => {
+      const items = state[participantId] || [];
+      const index = items.lastIndexOf(Number(itemId));
+      if (index >= 0) items.splice(index, 1);
+    };
+    replayEvents(replay).forEach((event) => {
+      if (Number(event.timestamp || 0) > second * 1000) return;
+      const participantId = Number(event.participantId || 0);
+      if (!participantId) return;
+      state[participantId] ||= [];
+      if (event.type === "ITEM_PURCHASED") state[participantId].push(Number(event.itemId));
+      if (["ITEM_SOLD", "ITEM_DESTROYED"].includes(event.type)) remove(participantId, event.itemId);
+      if (event.type === "ITEM_UNDO") {
+        remove(participantId, event.beforeId);
+        if (Number(event.afterId || 0)) state[participantId].push(Number(event.afterId));
+      }
+    });
+    return state;
+  }
+
+  function combatState(replay, second) {
+    const rows = Object.fromEntries((replay.players || []).map((player) => [player.participantId, { kills: 0, deaths: 0, assists: 0 }]));
+    replayEvents(replay).forEach((event) => {
+      if (event.type !== "CHAMPION_KILL" || Number(event.timestamp || 0) > second * 1000) return;
+      if (rows[event.killerId]) rows[event.killerId].kills += 1;
+      if (rows[event.victimId]) rows[event.victimId].deaths += 1;
+      (event.assistingParticipantIds || []).forEach((id) => { if (rows[id]) rows[id].assists += 1; });
+    });
+    return rows;
+  }
+
+  function teamfights(replay) {
+    const kills = replayEvents(replay).filter((event) => event.type === "CHAMPION_KILL");
+    const groups = [];
+    kills.forEach((event) => {
+      const previous = groups.at(-1)?.at(-1);
+      if (!previous || Number(event.timestamp) - Number(previous.timestamp) > 15000) groups.push([event]);
+      else groups.at(-1).push(event);
+    });
+    return groups.filter((group) => group.length >= 3).map((group, index) => ({
+      id: `tf-${index}`,
+      start: Math.floor(Number(group[0].timestamp) / 1000),
+      end: Math.floor(Number(group.at(-1).timestamp) / 1000),
+      kills: group.length,
+      events: group,
+    }));
+  }
+
+  function eventLabel(event, replay) {
+    const player = (id) => replay.players?.find((row) => Number(row.participantId) === Number(id))?.champion || `P${id}`;
+    if (event.type === "CHAMPION_KILL") return `${player(event.killerId)} 击杀 ${player(event.victimId)}`;
+    if (event.type === "ELITE_MONSTER_KILL") return `${player(event.killerId)} 取得 ${event.monsterSubType || event.monsterType || "史诗野怪"}`;
+    if (event.type === "BUILDING_KILL") return `${event.laneType || "地图"} ${event.towerType || event.buildingType || "建筑"} 被摧毁`;
+    if (event.type === "WARD_PLACED") return `${player(event.creatorId)} 插眼`;
+    if (event.type === "WARD_KILL") return `${player(event.killerId)} 排眼`;
+    if (event.type === "ITEM_PURCHASED") return `${player(event.participantId)} 购买装备`;
+    return event.type || "事件";
+  }
+
+  function renderReplayMap(replay) {
+    const frame = frameAtSecond(replay, replayUi.second);
+    const deaths = deathStatesAt(replay, replayUi.second);
+    const playerMap = Object.fromEntries((replay.players || []).map((player) => [player.participantId, player]));
+    const match = (playerCase.matches || []).find((row) => row.matchRef === replayUi.matchRef) || {};
+    const focusId = (replay.players || []).find((player) => player.champion === match.champion && player.position === match.position)?.participantId;
+    $("replayClock").textContent = replayClock(replayUi.second);
+    $("replaySample").textContent = frame ? `位置采样 ${replayClock(Number(frame.timestamp || 0) / 1000)} · 事件精确到秒` : "无位置样本";
+    $("replayTimeline").value = replayUi.second;
+    $("replayMarkers").innerHTML = (frame?.players || []).map((sample) => {
+      const player = playerMap[sample.participantId] || {};
+      const death = deaths[sample.participantId];
+      const position = death?.position || sample;
+      const left = Math.max(0, Math.min(100, Number(position.x || 0) / 15000 * 100));
+      const top = Math.max(0, Math.min(100, 100 - Number(position.y || 0) / 15000 * 100));
+      const title = `${player.champion || sample.participantId} · Lv${sample.level}${death ? ` · 已阵亡，预计 ${death.remaining}s 后复活` : ""}`;
+      return `<button class="replay-marker team-${player.teamId}${Number(sample.participantId) === Number(focusId) ? " focus" : ""}${death ? " dead" : ""}" style="left:${left}%;top:${top}%" title="${escapeHtml(title)}"><img src="assets/ddragon/16.15.1/champion/${escapeHtml(player.champion)}.png" alt="${escapeHtml(player.champion)}"><span>${sample.level || ""}</span></button>`;
+    }).join("");
+    const nearby = replayEvents(replay).filter((event) => Math.abs(Number(event.timestamp || 0) / 1000 - replayUi.second) <= 2 && event.position?.x != null);
+    $("replayEventMarkers").innerHTML = nearby.map((event) => `<span class="replay-map-event" style="left:${Number(event.position.x) / 15000 * 100}%;top:${100 - Number(event.position.y) / 15000 * 100}%" title="${escapeHtml(eventLabel(event, replay))}">◆</span>`).join("");
+  }
+
+  function itemIcon(itemId) {
+    const item = replayUi.itemData[String(itemId)];
+    if (!item?.image) return `<span class="replay-item unknown" title="物品 ${itemId}">${itemId}</span>`;
+    const image = item.image;
+    return `<span class="replay-item" title="${escapeHtml(item.name || itemId)}" style="background-image:url('assets/ddragon/16.15.1/sprite/${escapeHtml(image.sprite)}');background-position:-${Number(image.x) / 2}px -${Number(image.y) / 2}px"></span>`;
+  }
+
+  function renderReplayTeams(replay) {
+    const frame = frameAtSecond(replay, replayUi.second);
+    const samples = Object.fromEntries((frame?.players || []).map((row) => [row.participantId, row]));
+    const combat = combatState(replay, replayUi.second);
+    const items = replayItemState(replay, replayUi.second);
+    const deaths = deathStatesAt(replay, replayUi.second);
+    [100, 200].forEach((teamId) => {
+      const target = teamId === 100 ? $("replayBlueTeam") : $("replayRedTeam");
+      target.innerHTML = (replay.players || []).filter((player) => Number(player.teamId) === teamId).map((player) => {
+        const sample = samples[player.participantId] || {};
+        const kda = combat[player.participantId] || {};
+        const death = deaths[player.participantId];
+        return `<div class="replay-tab-row${death ? " dead" : ""}"><img src="assets/ddragon/16.15.1/champion/${escapeHtml(player.champion)}.png" alt=""><div><b>${escapeHtml(player.champion)}</b><small>${escapeHtml(positionNames[player.position] || player.position)} · Lv${sample.level || "—"}${death ? ` · ☠ 预计 ${death.remaining}s` : ""}</small></div><strong>${kda.kills || 0}/${kda.deaths || 0}/${kda.assists || 0}</strong><span>${Number(sample.minions || 0) + Number(sample.jungleMinions || 0)} CS</span><span>${Number(sample.totalGold || 0).toLocaleString("zh-CN")}g</span><div class="replay-items">${(items[player.participantId] || []).slice(-7).map(itemIcon).join("")}</div></div>`;
+      }).join("");
+    });
+  }
+
+  function renderReplayEvents(replay) {
+    const events = replayEvents(replay).filter((event) => Math.abs(Number(event.timestamp || 0) / 1000 - replayUi.second) <= 12).slice(-8);
+    $("replayEventFeed").innerHTML = events.length ? events.map((event) => `<button type="button" data-seek="${Math.floor(Number(event.timestamp || 0) / 1000)}"><time>${replayClock(Number(event.timestamp || 0) / 1000)}</time><span>${escapeHtml(eventLabel(event, replay))}</span></button>`).join("") : `<span>当前时间点前后 12 秒没有离散事件。</span>`;
+    $("replayEventFeed").querySelectorAll("[data-seek]").forEach((button) => button.addEventListener("click", () => seekReplay(Number(button.dataset.seek))));
+  }
+
+  function renderReplayInsights(replay) {
+    const cards = [];
+    (replay.objectiveAnalyses || []).forEach((analysis) => {
+      const hypothesis = (analysis.hypotheses || []).find((row) => row.id === analysis.primaryHypothesisId);
+      const evidence = (analysis.facts || []).filter((fact) => (hypothesis?.evidenceIds || []).includes(fact.id));
+      cards.push({ second: analysis.eventSecond, title: `${analysis.objectiveName}丢失 · 候选原因`, text: hypothesis?.title || "未找到足够证据", detail: evidence.map((fact) => `${fact.label}（${fact.source}）`).join("；"), confidence: hypothesis ? `${hypothesis.grade} · ${Math.round(Number(hypothesis.confidence || 0) * 100)}% 启发式置信` : "证据不足" });
+    });
+    teamfights(replay).forEach((fight) => cards.push({ second: fight.start, title: `派生团战 ${replayClock(fight.start)}–${replayClock(fight.end)}`, text: `${fight.kills} 次英雄击杀被规则聚类`, detail: "相邻击杀≤15秒且总击杀≥3；保留 CHAMPION_KILL 原始证据。", confidence: "规则事件，不是 Riot 官方标签" }));
+    cards.sort((a, b) => a.second - b.second);
+    $("replayInsights").innerHTML = cards.length ? cards.map((card) => `<button type="button" class="replay-insight" data-seek="${card.second}"><time>${replayClock(card.second)}</time><div><b>${escapeHtml(card.title)}</b><strong>${escapeHtml(card.text)}</strong><small>${escapeHtml(card.detail)}</small><em>${escapeHtml(card.confidence)}</em></div></button>`).join("") : `<div class="empty">本局没有符合规则的团战或目标丢失候选原因。</div>`;
+    $("replayInsights").querySelectorAll("[data-seek]").forEach((button) => button.addEventListener("click", () => seekReplay(Number(button.dataset.seek))));
+  }
+
+  function renderReplay() {
+    const replay = playerReplays[replayUi.matchRef];
+    if (!replay) return;
+    renderReplayMap(replay);
+    renderReplayTeams(replay);
+    renderReplayEvents(replay);
+  }
+
+  function seekReplay(second) {
+    const replay = playerReplays[replayUi.matchRef];
+    replayUi.second = Math.max(0, Math.min(Number(replay?.durationSeconds || 0), Math.round(Number(second) || 0)));
+    renderReplay();
+  }
+
+  function selectReplay(matchRef) {
+    const replay = playerReplays[matchRef];
+    if (!replay) return;
+    replayUi.matchRef = matchRef;
+    $("replayMatchSelect").value = matchRef;
+    $("replayTimeline").max = Number(replay.durationSeconds || 1);
+    replayUi.second = Math.min(900, Number(replay.durationSeconds || 0));
+    renderReplayInsights(replay);
+    renderReplay();
+  }
+
+  function initReplay() {
+    const refs = (playerCase.matches || []).map((match) => match.matchRef).filter((ref) => playerReplays[ref]);
+    $("replayMatchSelect").innerHTML = refs.map((ref) => {
+      const match = (playerCase.matches || []).find((row) => row.matchRef === ref) || {};
+      return option(ref, `${ref} · ${match.champion || "未知"} · ${match.win ? "胜" : "负"}`);
+    }).join("");
+    if (!$("replayMatchSelect").dataset.bound) {
+      $("replayMatchSelect").dataset.bound = "true";
+      $("replayMatchSelect").addEventListener("change", (event) => selectReplay(event.target.value));
+      $("replayTimeline").addEventListener("input", (event) => seekReplay(event.target.value));
+      $("replayStart").addEventListener("click", () => seekReplay(0));
+      $("replayEnd").addEventListener("click", () => seekReplay(playerReplays[replayUi.matchRef]?.durationSeconds || 0));
+      $("replayBack").addEventListener("click", () => seekReplay(replayUi.second - 10));
+      $("replayForward").addEventListener("click", () => seekReplay(replayUi.second + 10));
+      $("replayPlay").addEventListener("click", () => {
+        if (replayUi.timer) {
+          clearInterval(replayUi.timer); replayUi.timer = null; $("replayPlay").textContent = "播放"; return;
+        }
+        $("replayPlay").textContent = "暂停";
+        replayUi.timer = window.setInterval(() => {
+          const duration = Number(playerReplays[replayUi.matchRef]?.durationSeconds || 0);
+          if (replayUi.second >= duration) { clearInterval(replayUi.timer); replayUi.timer = null; $("replayPlay").textContent = "播放"; return; }
+          seekReplay(replayUi.second + 1);
+        }, 250);
+      });
+      fetch("assets/item-data.json").then((response) => response.json()).then((payload) => { replayUi.itemData = payload.data || {}; renderReplay(); }).catch(() => {});
+    }
+    if (!refs.length) {
+      $("replayMatchSelect").innerHTML = option("", "没有可用回放");
+      $("replayInsights").innerHTML = `<div class="empty">查询玩家后会生成赛后 Timeline 回放。</div>`;
+      return;
+    }
+    selectReplay(refs[0]);
+    $("recentMatches").querySelectorAll("tr[data-match-ref]").forEach((row) => row.addEventListener("click", () => { selectReplay(row.dataset.matchRef); $("webReplayTitle").scrollIntoView({ behavior: "smooth" }); }));
   }
 
   function setPlayerServiceState(message, state = "checking") {
@@ -335,11 +654,30 @@
     $("playerRefreshButton").disabled = !enabled;
   }
 
+  function setPlayerServiceAvailable(available) {
+    $("apiKeySaveButton").disabled = !available || cloudService;
+    $("playerApiKeyField").hidden = cloudService;
+    $("apiKeySaveButton").hidden = cloudService;
+  }
+
   async function readPlayerServiceStatus() {
     try {
-      const response = await fetch(`${playerServiceBase}/status?refresh=${Date.now()}`, { cache: "no-store" });
+      const statusUrl = cloudService
+        ? `${playerServiceBase}/health?refresh=${Date.now()}`
+        : `${playerServiceBase}/status?refresh=${Date.now()}`;
+      const response = await fetch(statusUrl, { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const status = await response.json();
+      setPlayerServiceAvailable(true);
+      if (cloudService) {
+        const usable = Boolean(status.ok && status.keyConfigured);
+        setPlayerControlsEnabled(usable);
+        setPlayerServiceState(
+          usable ? "安全云端查询服务在线 · API Key 不会发送到浏览器" : "云端服务在线，但 Riot Production Key 尚未配置。",
+          usable ? "online" : "error",
+        );
+        return true;
+      }
       if (!$("playerRiotId").value && status.currentRiotId) $("playerRiotId").value = status.currentRiotId;
       const keyExpired = Boolean(status.lastError && /401|apikey/i.test(status.lastError));
       const usable = Boolean(status.canRefresh) && !status.busy && !keyExpired;
@@ -360,15 +698,77 @@
       return true;
     } catch (error) {
       setPlayerControlsEnabled(false);
-      setPlayerServiceState("当前为静态只读站；从本地安全服务打开此页即可切换玩家。", "offline");
+      setPlayerServiceAvailable(false);
+      setPlayerServiceState(
+        cloudService ? "云端查询服务暂时不可用，请稍后重试。" : "当前为静态只读站；从本地安全服务打开此页即可切换玩家。",
+        "offline",
+      );
       return false;
     }
+  }
+
+  async function saveApiKey() {
+    if (cloudService) throw new Error("公开网站不接受用户 API Key。");
+    const input = $("playerApiKey");
+    const apiKey = input.value.trim();
+    if (!apiKey) throw new Error("请输入 RGAPI- 开头的 Riot API Key。");
+    setPlayerServiceState("正在把 API Key 保存到本机…", "busy");
+    const response = await fetch(`${playerServiceBase}/key`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    input.value = "";
+    setPlayerControlsEnabled(true);
+    setPlayerServiceState("API Key 已仅保存在本机，可以查询任意 Riot ID。", "online");
+    return result;
   }
 
   async function updatePlayerCase(action, riotId = null) {
     setPlayerControlsEnabled(false);
     setPlayerServiceState(action === "switch" ? "正在切换玩家并检查英雄基准…" : "正在检查当前玩家的新对局…", "busy");
     try {
+      if (cloudService) {
+        const targetRiotId = riotId || playerCase.meta?.riotId || $("playerRiotId").value.trim();
+        const response = await fetch(`${playerServiceBase}/v1/analyses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ riotId: targetRiotId, platform: "oc1", matchCount: 10 }),
+        });
+        const submitted = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(submitted.detail || `HTTP ${response.status}`);
+        const deadline = Date.now() + 300_000;
+        let job = submitted;
+        while (!["completed", "failed"].includes(job.status)) {
+          if (Date.now() >= deadline) throw new Error("分析超过五分钟，请稍后重试。");
+          await new Promise((resolvePromise) => window.setTimeout(resolvePromise, Number(job.pollAfterMs || 1500)));
+          const poll = await fetch(`${playerServiceBase}/v1/analyses/${encodeURIComponent(submitted.jobId)}`, { cache: "no-store" });
+          job = await poll.json().catch(() => ({}));
+          if (!poll.ok) throw new Error(job.detail || `HTTP ${poll.status}`);
+          setPlayerServiceState(`正在分析 ${targetRiotId} · ${job.status === "running" ? "读取比赛与 Timeline" : "等待队列"}…`, "busy");
+        }
+        if (job.status === "failed") throw new Error(job.error || "分析失败");
+        playerCase = job.result?.playerCase || { meta: {}, summaries: {}, matches: [] };
+        playerReplays = job.result?.replays || {};
+        window.PLAYER_CASE = playerCase;
+        window.PLAYER_REPLAYS = playerReplays;
+        const preferred = {
+          championFilter: playerCase.meta?.primaryChampion,
+          positionFilter: playerCase.meta?.primaryPosition,
+        };
+        Object.entries(preferred).forEach(([id, value]) => {
+          if (value && Array.from($(id).options).some((entry) => entry.value === value)) $(id).value = value;
+        });
+        renderCase();
+        render();
+        initReplay();
+        $("playerRiotId").value = playerCase.meta?.riotId || targetRiotId;
+        setPlayerServiceState(`${playerCase.meta?.riotId || targetRiotId} · 已载入 ${playerCase.meta?.rankedSoloMatches || 0} 场`, "online");
+        setPlayerControlsEnabled(true);
+        return;
+      }
       const response = await fetch(`${playerServiceBase}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -390,14 +790,24 @@
   }
 
   function initPlayerControls() {
-    $("playerSwitchForm").addEventListener("submit", (event) => {
+    $("playerSwitchForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const riotId = $("playerRiotId").value.trim();
       if (!riotId) {
         setPlayerServiceState("请输入玩家名#TAG。", "error");
         return;
       }
-      updatePlayerCase("switch", riotId);
+      try {
+        if ($("playerApiKey").value.trim()) await saveApiKey();
+        await updatePlayerCase("switch", riotId);
+      } catch (error) {
+        setPlayerServiceState(`查询失败：${error.message}`, "error");
+        setPlayerControlsEnabled(true);
+      }
+    });
+    $("apiKeySaveButton").addEventListener("click", async () => {
+      try { await saveApiKey(); }
+      catch (error) { setPlayerServiceState(`保存失败：${error.message}`, "error"); }
     });
     $("playerRefreshButton").addEventListener("click", () => updatePlayerCase("refresh"));
     readPlayerServiceStatus().then((available) => {
@@ -443,5 +853,6 @@
   populate();
   renderCase();
   render();
+  initReplay();
   initPlayerControls();
 })();

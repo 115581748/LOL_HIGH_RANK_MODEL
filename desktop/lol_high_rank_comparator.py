@@ -53,6 +53,7 @@ if not getattr(sys, "frozen", False):
         sys.path.insert(0, str(source_root))
 
 from riot_model.client import RiotClient
+from riot_model.diagnostics import METRICS as REVIEW_METRICS, review_report
 from riot_model.features import extract_match_replay, extract_player_match
 from riot_model.settings import load_settings
 from tools.build_conditional_model import PHASE_METRICS, number, phase_metrics
@@ -122,6 +123,11 @@ LOWER_IS_BETTER_METRICS = {
     "early_first_gank_minute", "mid_first_gank_minute",
 }
 MAGNITUDE_ONLY_METRICS = {"late_damage_taken_per_min"}
+TEAM_CONTEXT_METRICS = {
+    "mid_team_turrets", "mid_team_dragons", "early_team_dragons",
+    "early_team_void_grubs", "early_team_rift_heralds",
+    "mid_team_void_grubs", "mid_team_rift_heralds",
+}
 ABILITY_CATEGORY_ORDER = ("FARMING", "PRESSURE", "SURVIVAL", "DAMAGE", "TEAMFIGHT", "MACRO", "VISION")
 ABILITY_CATEGORY_LABELS = {
     "FARMING": "发育",
@@ -199,6 +205,16 @@ def app_data_dir() -> Path:
     return path
 
 
+def load_local_case(case_path, bootstrap_path: Path) -> tuple[dict, str | None]:
+    """Load the writable player cache without letting stale ACLs kill startup."""
+    try:
+        if case_path.exists():
+            return json.loads(case_path.read_text(encoding="utf-8")), None
+    except (OSError, json.JSONDecodeError) as exc:
+        return load_bootstrap_case(bootstrap_path), f"无法读取本机玩家缓存，已使用内置案例：{exc}"
+    return load_bootstrap_case(bootstrap_path), None
+
+
 def parse_riot_id(value: str) -> tuple[str, str]:
     candidate = urllib.parse.unquote(str(value or "").strip())
     if "/summoners/" in candidate:
@@ -216,6 +232,13 @@ def parse_riot_id(value: str) -> tuple[str, str]:
 
 
 def load_bootstrap_case(path: Path) -> dict:
+    if not path.exists():
+        return {
+            "meta": {"status": "WAITING_FOR_RIOT_KEY", "riotId": "玩家名#TAG", "rankedSoloMatches": 0},
+            "summaries": {},
+            "matches": [],
+            "diagnosis": {"games": 0, "findings": [], "boundary": "输入 Riot ID 与 API Key 后生成本机赛后分析。"},
+        }
     source = path.read_text(encoding="utf-8").strip()
     if source.startswith("window.PLAYER_CASE="):
         source = source[len("window.PLAYER_CASE="):].removesuffix(";")
@@ -266,7 +289,26 @@ def performance_tier(percentile, scale=None) -> dict | None:
     return {**selected, "percentile": value}
 
 
+def performance_grade(percentile) -> dict | None:
+    """Plain-language quartile label, never an estimate of the player's rank."""
+    try:
+        value = float(percentile)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    if value >= 75:
+        return {"label": "优秀", "color": "#65d7cf"}
+    if value >= 50:
+        return {"label": "合格", "color": "#9bd98b"}
+    if value >= 25:
+        return {"label": "欠缺", "color": "#e9bd59"}
+    return {"label": "垃圾", "color": "#ef7774"}
+
+
 def metric_performance_percentile(metric: str, value, stats: dict | None) -> float | None:
+    if metric in {"early_first_gank_minute", "mid_first_gank_minute"} and (number(value) or 0) <= 0:
+        return None
     percentile = approximate_percentile(value, stats)
     if percentile is None:
         return None
@@ -281,8 +323,10 @@ def metric_rating_text(metric: str, value, stats: dict | None, scale=None) -> st
         return "—"
     if metric in MAGNITUDE_ONLY_METRICS:
         return f"承伤量级 · P{round(percentile)}"
-    tier = performance_tier(percentile, scale)
-    return f"≈{tier['label']} · P{round(percentile)}"
+    if metric in TEAM_CONTEXT_METRICS:
+        return f"团队情境 · P{round(percentile)}"
+    grade = performance_grade(percentile)
+    return f"{grade['label']} · P{round(percentile)}"
 
 
 def ability_category_label(category: str, position: str | None = None, phase: str | None = None) -> str:
@@ -298,7 +342,7 @@ def match_performance_profile(match: dict, phase: str, baselines: dict, scale=No
     baseline = baselines.get(f"{match.get('champion')}|{position}|{phase}", {})
     grouped = {category: [] for category in ABILITY_CATEGORY_ORDER}
     for metric in phase_metrics(phase, position):
-        if metric in MAGNITUDE_ONLY_METRICS:
+        if metric in MAGNITUDE_ONLY_METRICS or metric in TEAM_CONTEXT_METRICS:
             continue
         category = METRIC_ABILITY_CATEGORIES.get(metric)
         stats = baseline.get("metrics", {}).get(metric)
@@ -318,16 +362,57 @@ def match_performance_profile(match: dict, phase: str, baselines: dict, scale=No
             continue
         percentile = float(statistics.median(item["percentile"] for item in evidence))
         tier = performance_tier(percentile, scale)
+        grade = performance_grade(percentile)
         output.append({
             "category": category,
             "label": ability_category_label(category, position, phase),
             "percentile": percentile,
             "tier": tier["label"],
-            "color": tier.get("color", PALETTE["teal"]),
+            "grade": grade["label"],
+            "color": grade["color"],
             "sampleSize": min(item["sampleSize"] for item in evidence),
             "metrics": [item["metric"] for item in evidence],
         })
     return output
+
+
+def match_review_summary(match: dict, baselines: dict, minimum_samples: int = 20) -> dict:
+    """One evidence-linked review prompt for a match, not a claim about loss causation."""
+    evidence = []
+    duration = number(match.get("durationMin")) or 0
+    for phase in ("EARLY", "MID", "LATE"):
+        if (phase == "EARLY" and duration < 15) or (phase == "MID" and duration < 25) or (phase == "LATE" and duration <= 25):
+            continue
+        profile = baselines.get(f"{match.get('champion')}|{match.get('position')}|{phase}", {})
+        for metric in phase_metrics(phase, match.get("position")):
+            if metric in MAGNITUDE_ONLY_METRICS or metric in TEAM_CONTEXT_METRICS:
+                continue
+            stats = profile.get("metrics", {}).get(metric)
+            if not stats or (number(stats.get("n")) or 0) < minimum_samples:
+                continue
+            percentile = metric_performance_percentile(metric, match.get(metric), stats)
+            if percentile is not None:
+                evidence.append({"metric": metric, "label": METRIC_NAMES.get(metric, metric),
+                                 "phase": phase, "percentile": percentile, "n": int(stats["n"])})
+    if not evidence:
+        return {"status": "insufficient", "text": "同英雄同位置基准或本局指标不足，暂不判定优先复盘项。", "evidence": []}
+    weak = sorted((row for row in evidence if row["percentile"] < 50), key=lambda row: row["percentile"])
+    if not weak:
+        return {"status": "none", "text": "没有低于 P50 的个人指标；可继续核对对位差与关键事件。", "evidence": []}
+    focus = weak[0]
+    category = METRIC_ABILITY_CATEGORIES.get(focus["metric"])
+    hints = {
+        "FARMING": "回看漏刀、回城和空转时间。",
+        "PRESSURE": "回看对线或抓人时机，核对当时的队友与敌方位置。",
+        "SURVIVAL": "回看死亡前的位置、视野和撤退时机。",
+        "DAMAGE": "先核对到场、存活与可输出时间。",
+        "TEAMFIGHT": "回看团战到场与进场条件。",
+        "MACRO": "回看资源刷新前的转线与到场时机。",
+        "VISION": "回看资源争夺前的布眼与排眼；得分不等于眼位质量。",
+    }
+    action = REVIEW_METRICS.get(focus["metric"], (None, None, None, None))[3] or hints.get(category, "回看该指标对应的关键事件。")
+    grade = performance_grade(focus["percentile"])["label"]
+    return {"status": "review", "text": f"优先复盘：{focus['label']} {grade} · P{round(focus['percentile'])}（n={focus['n']}）。{action} 这是复盘线索，不证明输因。", "evidence": weak[:2]}
 
 
 def format_metric(metric: str, value) -> str:
@@ -1241,6 +1326,7 @@ class ComparatorApp(tk.Tk):
         self.data_dir = app_data_dir()
         self.key_path = self.data_dir / "riot_api_key.txt"
         self.case_path = self.data_dir / "player_case.json"
+        self.storage_warning = None
         self.settings = load_settings(resource_path("config/model-parameters.json"))
         rating_settings = self.settings.get("performance_rating", {})
         self.performance_scale = rating_settings.get("scale") or list(DEFAULT_PERFORMANCE_SCALE)
@@ -1293,6 +1379,8 @@ class ComparatorApp(tk.Tk):
         self.api_key = tk.StringVar()
         self.auto_refresh = tk.BooleanVar(value=True)
         self.status_text = tk.StringVar(value="程序已就绪")
+        if self.storage_warning:
+            self.status_text.set(self.storage_warning)
         self._configure_style()
         self._build_ui()
         self._populate_matches()
@@ -1301,12 +1389,9 @@ class ComparatorApp(tk.Tk):
         self.after(5000, self._auto_tick)
 
     def _load_case(self) -> dict:
-        if self.case_path.exists():
-            try:
-                return json.loads(self.case_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                pass
-        return load_bootstrap_case(resource_path("assets/player-case.js"))
+        case, warning = load_local_case(self.case_path, resource_path("assets/player-case.js"))
+        self.storage_warning = warning
+        return case
 
     def _configure_style(self) -> None:
         style = ttk.Style(self)
@@ -1414,9 +1499,12 @@ class ComparatorApp(tk.Tk):
         for phase in ("EARLY", "MID", "LATE"):
             ttk.Radiobutton(phase_box, text=PHASE_NAMES[phase], value=phase, variable=self.selected_phase, command=self._render_comparison).pack(side="left")
 
+        self.match_review_note = ttk.Label(right, text="选择一场比赛后显示优先复盘方向。", style="Muted.TLabel", wraplength=1050, justify="left")
+        self.match_review_note.pack(fill="x", pady=(0, 7))
+
         self.explanation = ttk.Label(
             right,
-            text="≈表现段位来自同英雄＋同位置 D4+ 分位映射，不是实际 Rank 或 MMR；团队指标只是情境，承伤只显示量级。",
+            text="本局指标按同英雄＋同位置 D4+ 分位判档：P75+ 优秀、P50+ 合格、P25+ 欠缺、低于 P25 垃圾。仅评指标，不评人；团队结果只作情境。",
             style="Muted.TLabel",
             background="#0c1319",
         )
@@ -1424,10 +1512,35 @@ class ComparatorApp(tk.Tk):
 
         self.notebook = ttk.Notebook(right)
         self.notebook.pack(fill="both", expand=True)
+        review_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=10)
         compare_tab = ttk.Frame(self.notebook, style="Panel.TFrame")
         replay_tab = ttk.Frame(self.notebook, style="Panel.TFrame")
+        self.notebook.add(review_tab, text="优先复盘")
         self.notebook.add(compare_tab, text="数据对比")
         self.notebook.add(replay_tab, text="整场小地图")
+        self.compare_tab = compare_tab
+
+        self.review_summary = ttk.Label(review_tab, text="正在检查反复出现的差距…", style="Muted.TLabel", wraplength=850, justify="left")
+        self.review_summary.pack(fill="x", pady=(0, 8))
+        self.review_selector = ttk.Combobox(review_tab, state="readonly")
+        self.review_selector.pack(fill="x", pady=(0, 8))
+        self.review_selector.bind("<<ComboboxSelected>>", lambda _event: self._render_review_evidence())
+        self.review_action = ttk.Label(review_tab, text="", style="Muted.TLabel", wraplength=850, justify="left")
+        self.review_action.pack(fill="x", pady=(0, 8))
+        review_columns = ("match", "value", "baseline", "gap", "status", "n")
+        self.review_tree = ttk.Treeview(review_tab, columns=review_columns, show="headings")
+        for column, heading, width in (
+            ("match", "比赛 / 英雄 / 胜负", 255), ("value", "本局", 90), ("baseline", "基准中位数", 105),
+            ("gap", "差距", 90), ("status", "状态", 135), ("n", "基准样本", 80),
+        ):
+            self.review_tree.heading(column, text=heading)
+            self.review_tree.column(column, width=width, anchor="w" if column == "match" else "center", stretch=column == "match")
+        self.review_tree.tag_configure("weak", foreground="#e9bd59", background="#241719")
+        review_scroll = ttk.Scrollbar(review_tab, orient="vertical", command=self.review_tree.yview)
+        self.review_tree.configure(yscrollcommand=review_scroll.set)
+        self.review_tree.pack(side="left", fill="both", expand=True)
+        review_scroll.pack(side="right", fill="y")
+        self.review_tree.bind("<Double-1>", self._open_review_match)
 
         self.performance_canvas = tk.Canvas(
             compare_tab, height=216, bg="#081015", highlightthickness=1,
@@ -1442,11 +1555,11 @@ class ComparatorApp(tk.Tk):
         headings = {
             "metric": "指标", "player": "你本局", "opponent": "对手本局", "player_base": "你英雄基准",
             "opponent_base": "对手英雄基准", "head_gap": "你−对手", "player_gap": "你−基准",
-            "opponent_gap": "对手−基准", "player_pct": "你的表现段位", "opponent_pct": "对手表现段位",
+            "opponent_gap": "对手−基准", "player_pct": "你的指标判档", "opponent_pct": "对手指标判档",
         }
         headings["player_base"] = "你英雄基准（n=局数）"
         headings["opponent_base"] = "对手英雄基准（n=局数）"
-        widths = {"metric": 180, "player": 78, "opponent": 78, "player_base": 118, "opponent_base": 118, "head_gap": 84, "player_gap": 84, "opponent_gap": 92, "player_pct": 128, "opponent_pct": 128}
+        widths = {"metric": 180, "player": 78, "opponent": 78, "player_base": 118, "opponent_base": 118, "head_gap": 84, "player_gap": 84, "opponent_gap": 92, "player_pct": 136, "opponent_pct": 136}
         for column in columns:
             self.comparison_tree.heading(column, text=headings[column])
             self.comparison_tree.column(column, width=widths[column], anchor="w" if column == "metric" else "center", stretch=column in {"metric", "player_base", "opponent_base"})
@@ -2592,7 +2705,7 @@ class ComparatorApp(tk.Tk):
         phase = self.selected_phase.get()
         if not match:
             canvas.create_text(
-                width / 2, 108, text="选择一场比赛后生成单局能力段位",
+                width / 2, 108, text="选择一场比赛后生成单局指标判档",
                 fill=PALETTE["muted"], font=("Microsoft YaHei UI", 11),
             )
             return
@@ -2605,7 +2718,7 @@ class ComparatorApp(tk.Tk):
         )
         canvas.create_rectangle(10, 34, 14, 181, fill=PALETTE["gold"], outline="")
         canvas.create_text(
-            28, 28, text=f"{PHASE_NAMES.get(phase, phase)} · 本局能力段位",
+            28, 28, text=f"{PHASE_NAMES.get(phase, phase)} · 本局指标判档",
             fill="#91a7af", font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
         )
         champion = match.get("champion") or "—"
@@ -2634,12 +2747,12 @@ class ComparatorApp(tk.Tk):
         weakest = min(ratings, key=lambda item: item["percentile"])
         canvas.create_text(28, 111, text="本局最强", fill="#708891", font=("Microsoft YaHei UI", 8, "bold"), anchor="w")
         canvas.create_text(
-            28, 136, text=f"{strongest['label']}  {strongest['tier']}",
+            28, 136, text=f"{strongest['label']}  {strongest['grade']} · P{round(strongest['percentile'])}",
             fill=strongest["color"], font=("Microsoft YaHei UI", 13, "bold"), anchor="w",
         )
         canvas.create_text(28, 162, text="优先复盘", fill="#708891", font=("Microsoft YaHei UI", 8, "bold"), anchor="w")
         canvas.create_text(
-            28, 187, text=f"{weakest['label']}  {weakest['tier']}",
+            28, 187, text=f"{weakest['label']}  {weakest['grade']} · P{round(weakest['percentile'])}",
             fill=weakest["color"], font=("Microsoft YaHei UI", 13, "bold"), anchor="w",
         )
 
@@ -2666,8 +2779,12 @@ class ComparatorApp(tk.Tk):
                 font=("Consolas", 9, "bold"), anchor="e",
             )
             canvas.create_text(
-                x1 + 15, y1 + 48, text=rating["tier"], fill=rating["color"],
+                x1 + 15, y1 + 43, text=rating["grade"], fill=rating["color"],
                 font=("Microsoft YaHei UI", 15, "bold"), anchor="w",
+            )
+            canvas.create_text(
+                x2 - 12, y1 + 46, text=f"≈{rating['tier']}", fill="#718a93",
+                font=("Microsoft YaHei UI", 8), anchor="e",
             )
             sample_text = f"{len(rating['metrics'])} 项指标 · n≥{rating['sampleSize']}"
             if low_sample:
@@ -2696,13 +2813,75 @@ class ComparatorApp(tk.Tk):
                     self.comparison_tree.see(metric)
                     return
 
+    def _render_review(self) -> None:
+        self.review_report = review_report(self.case.get("matches", []), self.baselines)
+        findings = self.review_report.get("findings", [])
+        recurring = [item for item in findings if item["recurring"]]
+        games = self.review_report.get("games", 0)
+        if recurring:
+            self.review_summary.configure(text=f"最近 {games} 场发现 {len(recurring)} 项达到重复弱项规则。双击证据可回到该局的数据对比。")
+        else:
+            self.review_summary.configure(text=f"最近 {games} 场没有指标达到重复弱项阈值；偶发差距仍列出，但不会被包装成稳定问题。")
+        values = [f"{item['label']} · 弱四分位 {item['weakCount']}/{item['eligible']}" for item in findings]
+        self.review_selector.configure(values=values)
+        if values:
+            current = self.review_selector.current()
+            self.review_selector.current(current if 0 <= current < len(values) else 0)
+        else:
+            self.review_selector.set("没有满足英雄、位置和最低样本量要求的指标")
+        self._render_review_evidence()
+
+    def _render_review_evidence(self) -> None:
+        for item in self.review_tree.get_children():
+            self.review_tree.delete(item)
+        findings = getattr(self, "review_report", {}).get("findings", [])
+        index = self.review_selector.current()
+        if not (0 <= index < len(findings)):
+            self.review_action.configure(text=getattr(self, "review_report", {}).get("boundary", ""))
+            return
+        finding = findings[index]
+        self.review_action.configure(text=f"下一步：{finding['action']}  |  {self.review_report['boundary']}")
+        for row_index, row in enumerate(finding["evidence"]):
+            played = datetime.fromtimestamp(row["gameStartMs"] / 1000).strftime("%Y-%m-%d %H:%M")
+            status = "弱四分位 · 优先看" if row["weak"] else ("弱于中位数" if row["below"] else "不弱于中位数")
+            self.review_tree.insert("", "end", iid=f"review-{row_index}", values=(
+                f"{played} · {row['champion']} · {'胜' if row['win'] else '负'}",
+                format_metric(finding["metric"], row["value"]), format_metric(finding["metric"], row["baseline"]),
+                format_gap(finding["metric"], row["gap"]), status, f"n={row['n']}",
+            ), tags=("weak",) if row["weak"] else ())
+
+    def _open_review_match(self, _event=None) -> None:
+        findings = getattr(self, "review_report", {}).get("findings", [])
+        finding_index = self.review_selector.current()
+        selected = self.review_tree.selection()
+        if not selected or not (0 <= finding_index < len(findings)):
+            return
+        evidence_index = int(selected[0].split("-")[-1])
+        finding = findings[finding_index]
+        row = finding["evidence"][evidence_index]
+        match_index = next((index for index, match in enumerate(self.case.get("matches", [])) if match.get("gameStartMs") == row["gameStartMs"]), None)
+        if match_index is None:
+            return
+        self.match_tree.selection_set(str(match_index))
+        self.match_tree.focus(str(match_index))
+        self.match_tree.see(str(match_index))
+        self.selected_phase.set("EARLY" if finding["phase"] == "FULL" else finding["phase"])
+        self._on_match_selected()
+        self.notebook.select(self.compare_tab)
+        if self.comparison_tree.exists(finding["metric"]):
+            self.comparison_tree.selection_set(finding["metric"])
+            self.comparison_tree.see(finding["metric"])
+
     def _render_comparison(self) -> None:
+        self._render_review()
         for item in self.comparison_tree.get_children():
             self.comparison_tree.delete(item)
         match = self._selected_match()
         self._render_performance_panel()
         if not match:
+            self.match_review_note.configure(text="选择一场比赛后显示优先复盘方向。")
             return
+        self.match_review_note.configure(text=match_review_summary(match, self.baselines, self.performance_minimum_samples)["text"])
         phase = self.selected_phase.get()
         start_ms = int(match.get("gameStartMs") or 0)
         played = datetime.fromtimestamp(start_ms / 1000).strftime("%Y-%m-%d %H:%M") if start_ms else "未知时间"
@@ -2715,7 +2894,10 @@ class ComparatorApp(tk.Tk):
             self.comparison_tree.insert("", "end", iid=metric, values=row, tags=("stripe",) if index % 2 else ())
 
     def _saved_key(self) -> str:
-        return self.key_path.read_text(encoding="ascii").strip() if self.key_path.exists() else ""
+        try:
+            return self.key_path.read_text(encoding="ascii").strip() if self.key_path.exists() else ""
+        except OSError:
+            return ""
 
     def _save_key(self) -> bool:
         candidate = self.api_key.get().strip()
@@ -2728,7 +2910,11 @@ class ComparatorApp(tk.Tk):
         if not candidate.startswith("RGAPI-") or len(candidate) < 20:
             messagebox.showerror(APP_TITLE, "API Key 格式不正确。")
             return False
-        self.key_path.write_text(candidate, encoding="ascii")
+        try:
+            self.key_path.write_text(candidate, encoding="ascii")
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, f"无法把 API Key 保存到本机应用目录：{exc}")
+            return False
         self.api_key.set("")
         self.status_text.set("API Key 已只保存在本机应用数据目录")
         return True

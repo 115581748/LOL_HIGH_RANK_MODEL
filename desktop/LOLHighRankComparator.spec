@@ -1,16 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import sys
 
 root = Path(SPECPATH).parent
+runtime_bin = Path(sys.prefix) / "Library" / "bin"
+tk_binaries = [
+    (str(runtime_bin / name), ".")
+    for name in ("tcl86t.dll", "tk86t.dll")
+    if (runtime_bin / name).exists()
+]
 
 a = Analysis(
     [str(root / "desktop" / "lol_high_rank_comparator.py")],
     pathex=[str(root)],
-    binaries=[],
+    binaries=tk_binaries,
     datas=[
         (str(root / "desktop" / "all-champion-baselines.json"), "desktop"),
-        (str(root / "desktop" / "bootstrap-replays.json"), "desktop"),
-        (str(root / "assets" / "player-case.js"), "assets"),
         (str(root / "assets" / "map11.png"), "assets"),
         (str(root / "assets" / "item-data.json"), "assets"),
         (str(root / "assets" / "summoner-spells.json"), "assets"),
